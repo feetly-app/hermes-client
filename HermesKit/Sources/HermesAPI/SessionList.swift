@@ -55,6 +55,9 @@ public struct RemoteSession: Sendable, Equatable, Identifiable, Decodable {
     /// The source of sessions created through the API.
     public static let apiSource = "api_server"
 
+    /// The source of sessions run by a scheduled (cron) job of the instance.
+    public static let cronSource = "cron"
+
     private enum CodingKeys: String, CodingKey {
         case id, title
         case startedAt = "started_at"
