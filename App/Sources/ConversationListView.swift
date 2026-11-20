@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Sidebar: the conversations, most recently used first, one line each (an icon for its kind and the title).
 /// Each is a session on the Hermes instance. Every row can be renamed or deleted, from its context menu or a
-/// swipe.
+/// swipe. A search field narrows the list by title.
 struct ConversationListView: View {
     let browser: ConversationBrowser
     /// Set to the reason when a rename or a delete fails.
@@ -15,10 +15,10 @@ struct ConversationListView: View {
     @State private var draftTitle = ""
     /// The id of the session waiting for the delete confirmation.
     @State private var deleting: String?
+    @State private var query = ""
 
     var body: some View {
         List(selection: selection) {
-            let sessions = browser.remoteSessions.recentFirst
             if !sessions.isEmpty {
                 Section("Recents") {
                     ForEach(sessions) { session in
@@ -30,6 +30,13 @@ struct ConversationListView: View {
                 .listRowSeparator(.hidden)
         }
         .sobreListStyle()
+        .searchable(text: $query, prompt: "Search")
+        .searchToolbarBehavior(.minimize)
+        .overlay {
+            if sessions.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView.search(text: query)
+            }
+        }
         .task {
             await browser.reloadSessions()
         }
@@ -60,6 +67,12 @@ struct ConversationListView: View {
         } message: { _ in
             Text("It is deleted from your Hermes instance, with all its messages.")
         }
+    }
+
+    /// The sessions, most recently used first, narrowed to the titles that match the search query (case and
+    /// accents ignored). The search covers the sessions loaded so far.
+    private var sessions: [RemoteSession] {
+        browser.remoteSessions.recentFirst.matching(query)
     }
 
     /// One line: the icon of the session kind and its title, truncated at the end. The icon takes the color
