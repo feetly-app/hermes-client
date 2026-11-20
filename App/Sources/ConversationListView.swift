@@ -31,7 +31,9 @@ struct ConversationListView: View {
         }
         .sobreListStyle()
         .searchable(text: $query, prompt: "Search")
-        .searchToolbarBehavior(.minimize)
+        #if os(iOS)
+            .searchToolbarBehavior(.minimize)
+        #endif
         .overlay {
             if sessions.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView.search(text: query)
