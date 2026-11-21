@@ -15,6 +15,9 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
     public let images: [ImageAttachment]
     /// Images the message names but this device has no copy of: they were sent from elsewhere.
     public let missingImageCount: Int
+    /// Set when the instance wrote the line itself, such as the results of a background task handed to the
+    /// agent: a short label to show instead of a user message. `text` keeps the full content.
+    public let notice: String?
 
     public init(
         id: String,
@@ -22,7 +25,8 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
         text: String,
         date: Date?,
         images: [ImageAttachment] = [],
-        missingImageCount: Int = 0
+        missingImageCount: Int = 0,
+        notice: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -30,6 +34,7 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
         self.date = date
         self.images = images
         self.missingImageCount = missingImageCount
+        self.notice = notice
     }
 }
 
@@ -131,7 +136,7 @@ public final class RemoteTranscript: Identifiable {
 
     /// Keeps the lines a reader should see, in the order the instance returned them. The image markers the
     /// instance writes into a message are taken out of its text; the images they name are looked up in
-    /// `imageStore`.
+    /// `imageStore`. Rows the instance wrote itself in the user's place become notices, see `notice(for:)`.
     public static func lines(
         from messages: [SessionMessage],
         imageStore: (any SentImageStore)? = nil
@@ -140,7 +145,14 @@ public final class RemoteTranscript: Identifiable {
             guard message.displayKind != "hidden",
                   message.role == "user" || message.role == "assistant"
             else { return nil }
-            let (text, references) = StoredImageMarkers.parse(message.content ?? "")
+            if let notice = notice(for: message) {
+                return TranscriptLine(
+                    id: message.id, role: message.role, text: message.content ?? "", date: message.timestamp,
+                    notice: notice
+                )
+            }
+            let content = message.displayContent ?? message.content ?? ""
+            let (text, references) = StoredImageMarkers.parse(content)
             let images = references.compactMap { reference in
                 reference.sha256.flatMap { imageStore?.image(sha256: $0) }
             }
@@ -154,6 +166,65 @@ public final class RemoteTranscript: Identifiable {
                 missingImageCount: references.count - images.count
             )
         }
+    }
+
+    /// The label of a user row the instance wrote itself, or `nil` for a message the user wrote.
+    ///
+    /// When a background task ends, the instance hands its results to the agent as a user message. The row
+    /// is typed by its `display_kind`. Rows stored before the instance typed them are recognised by the
+    /// header the instance puts at the start of their text.
+    static func notice(for message: SessionMessage) -> String? {
+        guard message.role == "user" else { return nil }
+        let metadata = message.displayMetadata
+        let content = message.content ?? ""
+        switch message.displayKind {
+        case "async_delegation_complete":
+            return delegationNotice(content: content, metadata: metadata)
+        case "process_complete":
+            return metadata?.displayText ?? "Background process finished"
+        case nil, "":
+            if content.hasPrefix("[ASYNC DELEGATION ") {
+                return delegationNotice(content: content, metadata: metadata)
+            }
+            if content.hasPrefix("[IMPORTANT: Background process ") {
+                return "Background process finished"
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private static func delegationNotice(content: String, metadata: DisplayMetadata?) -> String {
+        if let text = metadata?.displayText {
+            return text
+        }
+        if content.hasPrefix("[ASYNC DELEGATION TASK FAILED") {
+            return "A background task failed"
+        }
+        // The messages endpoint does not return `display_metadata`: the header line says how many tasks ran,
+        // as in "— 2 subagent(s) — has finished".
+        let count = metadata?.taskCount ?? subagentCount(in: content) ?? 1
+        var label = count == 1 ? "Background task finished" : "\(count) background tasks finished"
+        if let failed = metadata?.failedCount, failed > 0 {
+            label += ", \(failed) failed"
+        } else if metadata?.failedCount == nil, content.contains("--- ERROR ---") || content.contains("status=failed") {
+            label += " with errors"
+        }
+        return label
+    }
+
+    /// The number in "N subagent(s)" in the first lines of a delegation result, or `nil`.
+    private static func subagentCount(in content: String) -> Int? {
+        let head = content.split(separator: "\n", maxSplits: 3, omittingEmptySubsequences: false).prefix(3)
+        for line in head {
+            guard let range = line.range(of: " subagent(s)") else { continue }
+            let digits = line[..<range.lowerBound].reversed().prefix { $0.isNumber }
+            if let count = Int(String(digits.reversed())) {
+                return count
+            }
+        }
+        return nil
     }
 
     /// Loads the first page and replaces the transcript. A call made while a page is loading waits for it.
@@ -297,7 +368,7 @@ public final class RemoteTranscript: Identifiable {
         let line = lines[index]
         lines[index] = TranscriptLine(
             id: line.id, role: line.role, text: update(line.text), date: line.date,
-            images: line.images, missingImageCount: line.missingImageCount
+            images: line.images, missingImageCount: line.missingImageCount, notice: line.notice
         )
     }
 }

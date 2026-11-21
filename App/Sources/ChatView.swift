@@ -40,7 +40,11 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     ForEach(transcript.lines) { line in
-                        MessageRow(line: line)
+                        if let notice = line.notice {
+                            NoticeRow(label: notice, details: line.text)
+                        } else {
+                            MessageRow(line: line)
+                        }
                     }
                 }
                 .scrollTargetLayout()
@@ -318,5 +322,49 @@ struct MessageRow: View {
                 alignment: isUser ? .trailing : .leading
             )
         }
+    }
+}
+
+/// A line the instance wrote in the user's place, such as the results of a background task handed to the
+/// agent: a short label rather than a user message. A tap shows the full text.
+struct NoticeRow: View {
+    let label: String
+    let details: String
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                    Text(label)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isExpanded ? "Hides the details" : "Shows the details")
+
+            if isExpanded, !details.isEmpty {
+                MarkdownView(source: details)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 12)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(.quaternary)
+                            .frame(width: 2)
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
