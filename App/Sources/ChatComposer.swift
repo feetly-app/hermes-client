@@ -3,8 +3,11 @@ import HermesChat
 import SwiftUI
 
 /// The message composer floating over the bottom of a conversation: a rounded glass card with the
-/// images waiting to be sent, the text field, and the action buttons (add, send or stop) aligned
-/// to the bottom of the text field so the card stays compact when empty and grows only as needed.
+/// images waiting to be sent, the text field, and the action buttons (add, send or stop).
+///
+/// Layout mirrors ChatGPT: single-row (HStack) when the draft is short, then animates to a stacked
+/// layout (text full-width on top, button row below) as the user types. The transition is a spring
+/// animation; character-count hysteresis prevents flickering at the boundary.
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -22,8 +25,12 @@ struct ChatComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
 
-    /// Diameter of the round action buttons. Matches the previous action-row height so the
-    /// overall card stays the same size on a single-line input as before.
+    /// Whether the composer is in the expanded (stacked) layout.
+    /// Driven by `draft` changes with hysteresis so the layout does not flicker when the text
+    /// field's available width changes as buttons move in or out of the same row.
+    @State private var isExpanded = false
+
+    /// Diameter of the round action buttons.
     @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
 
     var body: some View {
@@ -41,26 +48,21 @@ struct ChatComposer: View {
                 .scrollIndicators(.hidden)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
-                if let onAdd {
-                    ComposerCircleButton("Add images", systemImage: "plus", size: buttonSize, action: onAdd)
-                        .disabled(isBusy)
+            if isExpanded {
+                // Expanded: text takes the full card width, action buttons sit below.
+                VStack(alignment: .leading, spacing: 8) {
+                    composerTextField
+                    actionRow
                 }
-
-                TextField("Message", text: $draft, axis: .vertical)
-                    .focused(isFocused)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1 ... 6)
-                    .padding(.vertical, 7)
-
-                if isBusy {
-                    ComposerCircleButton(
-                        "Stop", systemImage: "stop.fill", size: buttonSize, prominent: true, action: onStop)
-                } else {
-                    ComposerCircleButton(
-                        "Send", systemImage: "arrow.up", size: buttonSize, prominent: true, action: onSend)
-                        .disabled(!canSend)
+                .transition(.identity)
+            } else {
+                // Compact: single row — add button · text field · send/stop button.
+                HStack(alignment: .bottom, spacing: 8) {
+                    addButton
+                    composerTextField
+                    sendStopButton
                 }
+                .transition(.identity)
             }
         }
         .padding(.horizontal, 12)
@@ -68,6 +70,67 @@ struct ChatComposer: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
+        // Animate only when the layout mode flips; individual view changes (e.g. send ↔ stop)
+        // are not animated at the container level.
+        .animation(.spring(duration: 0.28, bounce: 0.12), value: isExpanded)
+        .onChange(of: draft, initial: true) { _, new in
+            updateLayout(for: new)
+        }
+    }
+
+    // MARK: - Layout helpers
+
+    /// Updates `isExpanded` with hysteresis.
+    ///
+    /// We use character count rather than the text field's measured height so the threshold does
+    /// not change when the available width changes (which would create a feedback loop between
+    /// the layout mode and the wrap detection).
+    ///
+    /// - Expand  when count > 36 or the text contains a newline.
+    /// - Collapse when count < 24 and the text has no newline.
+    private func updateLayout(for text: String) {
+        let hasNewline = text.contains("\n")
+        if !isExpanded, hasNewline || text.count > 36 {
+            isExpanded = true
+        } else if isExpanded, !hasNewline, text.count < 24 {
+            isExpanded = false
+        }
+    }
+
+    // MARK: - Sub-views
+
+    @ViewBuilder private var composerTextField: some View {
+        TextField("Message", text: $draft, axis: .vertical)
+            .focused(isFocused)
+            .textFieldStyle(.plain)
+            .lineLimit(1 ... 6)
+            .padding(.vertical, 7)
+    }
+
+    @ViewBuilder private var addButton: some View {
+        if let onAdd {
+            ComposerCircleButton("Add images", systemImage: "plus", size: buttonSize, action: onAdd)
+                .disabled(isBusy)
+        }
+    }
+
+    @ViewBuilder private var sendStopButton: some View {
+        if isBusy {
+            ComposerCircleButton(
+                "Stop", systemImage: "stop.fill", size: buttonSize, prominent: true, action: onStop)
+        } else {
+            ComposerCircleButton(
+                "Send", systemImage: "arrow.up", size: buttonSize, prominent: true, action: onSend)
+                .disabled(!canSend)
+        }
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 8) {
+            addButton
+            Spacer(minLength: 0)
+            sendStopButton
+        }
     }
 }
 
