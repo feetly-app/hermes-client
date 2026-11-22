@@ -30,10 +30,9 @@ struct ConversationListView: View {
                 .listRowSeparator(.hidden)
         }
         .sobreListStyle()
-        .searchable(text: $query, prompt: "Search")
-        #if os(iOS)
-            .searchToolbarBehavior(.minimize)
-        #endif
+        // In the list itself, as in Settings or Notes: under the large title on iOS, at the top of the
+        // sidebar on macOS. Not the toolbar search button, which hides the field until it is tapped.
+        .searchable(text: $query, placement: Self.searchPlacement, prompt: "Search")
         .overlay {
             if sessions.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView.search(text: query)
@@ -95,6 +94,14 @@ struct ConversationListView: View {
             onRename: { startRenaming(session.id, title: session.title ?? "") },
             onDelete: { deleting = session.id }
         ))
+    }
+
+    private static var searchPlacement: SearchFieldPlacement {
+        #if os(iOS)
+            .navigationBarDrawer(displayMode: .always)
+        #else
+            .sidebar
+        #endif
     }
 
     private static func icon(for kind: SessionKind) -> String {
