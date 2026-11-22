@@ -63,7 +63,8 @@ struct ConversationListView: View {
     }
 
     /// One line: the icon of the session kind and its title, truncated at the end. The icon takes the color
-    /// of the text, not the accent color.
+    /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
+    /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
         Label {
             Text(session.displayTitle)
@@ -72,6 +73,7 @@ struct ConversationListView: View {
                 .foregroundStyle(.primary)
         }
         .lineLimit(1)
+        .listItemTint(.monochrome)
         .tag(session.id)
         .listRowSeparator(.hidden)
         .modifier(RowActions(
