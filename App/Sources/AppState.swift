@@ -50,7 +50,7 @@ final class AppState {
         }
         let client = HermesClient(configuration: HermesClientConfiguration(baseURL: baseURL, apiKey: key))
         browser = ConversationBrowser(
-            remoteSessions: RemoteSessionList(source: client),
+            remoteSessions: RemoteSessionList(source: client, imageStore: DirectorySentImageStore.inCaches()),
             lastModel: UserDefaultsLastModelStorage()
         )
         modelCatalog = client

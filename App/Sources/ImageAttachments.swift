@@ -53,16 +53,3 @@ enum ImageAttachmentLoader {
         return Image(decorative: cgImage, scale: 1)
     }
 }
-
-/// A square preview of an image in a message.
-struct AttachmentThumbnail: View {
-    let data: Data
-
-    var body: some View {
-        (ImageAttachmentLoader.thumbnail(for: data) ?? Image(systemName: "photo"))
-            .resizable()
-            .scaledToFill()
-            .frame(width: 64, height: 64)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
