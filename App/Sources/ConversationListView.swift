@@ -30,8 +30,8 @@ struct ConversationListView: View {
                 .listRowSeparator(.hidden)
         }
         .sobreListStyle()
-        // In the list itself, as in Settings or Notes: under the large title on iOS, at the top of the
-        // sidebar on macOS. Not the toolbar search button, which hides the field until it is tapped.
+        // In the list itself, as in Mail or Notes: on iOS hidden under the large title until the list is
+        // pulled down, at the top of the sidebar on macOS. Not the toolbar search button.
         .searchable(text: $query, placement: Self.searchPlacement, prompt: "Search")
         .overlay {
             if sessions.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -98,7 +98,7 @@ struct ConversationListView: View {
 
     private static var searchPlacement: SearchFieldPlacement {
         #if os(iOS)
-            .navigationBarDrawer(displayMode: .always)
+            .navigationBarDrawer(displayMode: .automatic)
         #else
             .sidebar
         #endif
