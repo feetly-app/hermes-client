@@ -304,11 +304,16 @@ struct MessageRow: View {
             VStack(alignment: .trailing, spacing: 6) {
                 images
                 if !line.text.isEmpty {
-                    Text(line.text)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(.primary.opacity(0.12), in: .rect(cornerRadius: 22, style: .continuous))
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(preview ?? line.text)
+                            .textSelection(.enabled)
+                        if preview != nil {
+                            FullTextButton(text: line.text)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(.primary.opacity(0.12), in: .rect(cornerRadius: 22, style: .continuous))
                 }
             }
             .padding(.leading, 40)
@@ -321,10 +326,18 @@ struct MessageRow: View {
                         .padding(.bottom, line.text.isEmpty ? 0 : 18)
                 }
                 images
-                MarkdownView(source: line.text)
+                MarkdownView(source: preview ?? line.text)
+                if preview != nil {
+                    FullTextButton(text: line.text)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// The start of a message too long to draw whole, such as a pasted log or JSON page, or `nil`.
+    private var preview: String? {
+        LongText.preview(of: line.text)
     }
 
     @ViewBuilder
@@ -368,15 +381,21 @@ struct NoticeRow: View {
             .accessibilityHint(isExpanded ? "Hides the details" : "Shows the details")
 
             if isExpanded, !details.isEmpty {
-                MarkdownView(source: details)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 12)
-                    .overlay(alignment: .leading) {
-                        Rectangle()
-                            .fill(.quaternary)
-                            .frame(width: 2)
+                let preview = LongText.preview(of: details)
+                VStack(alignment: .leading, spacing: 10) {
+                    MarkdownView(source: preview ?? details)
+                    if preview != nil {
+                        FullTextButton(text: details)
                     }
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(.quaternary)
+                        .frame(width: 2)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
