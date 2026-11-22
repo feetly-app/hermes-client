@@ -7,7 +7,7 @@ import SwiftUI
 ///
 /// Layout mirrors ChatGPT: single-row (HStack) when the draft is short, then animates to a stacked
 /// layout (text full-width on top, button row below) as the user types. The transition is a spring
-/// animation; character-count hysteresis prevents flickering at the boundary.
+/// animation driven by the text field's actual rendered height, not a hardcoded character count.
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -26,9 +26,16 @@ struct ChatComposer: View {
     let onStop: () -> Void
 
     /// Whether the composer is in the expanded (stacked) layout.
-    /// Driven by `draft` changes with hysteresis so the layout does not flicker when the text
-    /// field's available width changes as buttons move in or out of the same row.
     @State private var isExpanded = false
+
+    /// Single-line text field height captured the first time the view is laid out.
+    /// Used as the threshold for the expand trigger.
+    @State private var singleLineHeight: CGFloat = 0
+
+    /// Character count at which the compact text field last wrapped to a second line.
+    /// Calibrated at runtime so the collapse threshold adapts to the actual font size
+    /// and screen width — no hardcoded magic number needed.
+    @State private var compactWrapCount: Int = 36
 
     /// Diameter of the round action buttons.
     @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
@@ -73,38 +80,45 @@ struct ChatComposer: View {
         // Animate only when the layout mode flips; individual view changes (e.g. send ↔ stop)
         // are not animated at the container level.
         .animation(.spring(duration: 0.28, bounce: 0.12), value: isExpanded)
-        .onChange(of: draft, initial: true) { _, new in
-            updateLayout(for: new)
-        }
-    }
-
-    // MARK: - Layout helpers
-
-    /// Updates `isExpanded` with hysteresis.
-    ///
-    /// We use character count rather than the text field's measured height so the threshold does
-    /// not change when the available width changes (which would create a feedback loop between
-    /// the layout mode and the wrap detection).
-    ///
-    /// - Expand  when count > 36 or the text contains a newline.
-    /// - Collapse when count < 24 and the text has no newline.
-    private func updateLayout(for text: String) {
-        let hasNewline = text.contains("\n")
-        if !isExpanded, hasNewline || text.count > 36 {
-            isExpanded = true
-        } else if isExpanded, !hasNewline, text.count < 24 {
-            isExpanded = false
-        }
     }
 
     // MARK: - Sub-views
 
+    /// The text field, with geometry observers that drive the layout transition.
+    ///
+    /// **Expand**: `onGeometryChange` observes the text field's actual rendered height while in
+    /// compact mode (squeezed between buttons). When it grows past 130 % of the single-line
+    /// baseline, the text has wrapped — we record the character count at that moment so the
+    /// collapse threshold is calibrated to the real font size and screen width.
+    ///
+    /// **Collapse**: driven by character count at 75 % of the wrap count (hysteresis). We
+    /// intentionally do NOT use the height for collapse: switching to expanded gives the text
+    /// field more horizontal space, which can shrink its height back to one line — using that as
+    /// a collapse signal would create a feedback loop between the two layout modes.
     @ViewBuilder private var composerTextField: some View {
         TextField("Message", text: $draft, axis: .vertical)
             .focused(isFocused)
             .textFieldStyle(.plain)
             .lineLimit(1 ... 6)
             .padding(.vertical, 7)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { newHeight in
+                // Track the minimum observed height as the single-line baseline, so the view
+                // works correctly even when the draft is non-empty on first appear.
+                if singleLineHeight == 0 || newHeight < singleLineHeight {
+                    singleLineHeight = newHeight
+                }
+                guard !isExpanded, singleLineHeight > 0, newHeight > singleLineHeight * 1.3 else { return }
+                if draft.count > 0 { compactWrapCount = draft.count }
+                isExpanded = true
+            }
+            .onChange(of: draft) { _, new in
+                // Collapse at 75 % of the wrap count. The factor provides enough hysteresis
+                // that adding and removing one character at the boundary does not flicker.
+                let collapseThreshold = Int(Double(compactWrapCount) * 0.75)
+                if isExpanded, !new.contains("\n"), new.count < collapseThreshold {
+                    isExpanded = false
+                }
+            }
     }
 
     @ViewBuilder private var addButton: some View {
