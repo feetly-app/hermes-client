@@ -1,20 +1,14 @@
 import HermesChat
 import SwiftUI
 
-/// Root view. First launch shows the settings alone. Once configured, a tab bar shows the chat and the settings.
+/// Root view. First launch shows the settings alone. Once configured, the conversations, with the settings
+/// one button away in the conversation list's toolbar.
 struct ContentView: View {
     @State private var appState = AppState()
 
     var body: some View {
         if let browser = appState.browser {
-            TabView {
-                Tab("Chat", systemImage: "bubble.left.and.bubble.right") {
-                    ConversationsView(browser: browser)
-                }
-                Tab("Settings", systemImage: "gearshape") {
-                    SettingsView(appState: appState)
-                }
-            }
+            ConversationsView(browser: browser, appState: appState)
         } else {
             SettingsView(appState: appState)
         }
