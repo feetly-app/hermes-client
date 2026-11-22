@@ -3,7 +3,8 @@ import HermesChat
 import SwiftUI
 
 /// The message composer floating over the bottom of a conversation: a rounded glass card with the
-/// images waiting to be sent, the text field, and a row of actions (add, send or stop).
+/// images waiting to be sent, the text field, and the action buttons (add, send or stop) aligned
+/// to the bottom of the text field so the card stays compact when empty and grows only as needed.
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -16,19 +17,17 @@ struct ChatComposer: View {
     var onRemoveImage: (Int) -> Void = { _ in }
     /// Opens the add sheet. `nil` hides the add button.
     var onAdd: (() -> Void)?
-    /// The model of the conversation, shown next to the add button. `nil` shows nothing.
-    var model: ModelChoice?
     let isBusy: Bool
     let canSend: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
-    /// Height of the action row: the model capsule, and the diameter of the round buttons beside it.
-    /// It is the capsule's natural height (subheadline text plus 10 pt above and below) and follows Dynamic Type.
-    @ScaledMetric(relativeTo: .subheadline) private var controlHeight: CGFloat = 38
+    /// Diameter of the round action buttons. Matches the previous action-row height so the
+    /// overall card stays the same size on a single-line input as before.
+    @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if !pendingImages.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 10) {
@@ -42,64 +41,33 @@ struct ChatComposer: View {
                 .scrollIndicators(.hidden)
             }
 
-            TextField("Message", text: $draft, axis: .vertical)
-                .focused(isFocused)
-                .textFieldStyle(.plain)
-                .lineLimit(1 ... 6)
-                .padding(.horizontal, 6)
-                .padding(.top, pendingImages.isEmpty ? 6 : 0)
-
-            HStack(spacing: 10) {
+            HStack(alignment: .bottom, spacing: 8) {
                 if let onAdd {
-                    ComposerCircleButton("Add images", systemImage: "plus", size: controlHeight, action: onAdd)
+                    ComposerCircleButton("Add images", systemImage: "plus", size: buttonSize, action: onAdd)
                         .disabled(isBusy)
                 }
 
-                if let model {
-                    ModelBadge(model: model, height: controlHeight)
-                }
-
-                Spacer(minLength: 0)
+                TextField("Message", text: $draft, axis: .vertical)
+                    .focused(isFocused)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1 ... 6)
+                    .padding(.vertical, 7)
 
                 if isBusy {
                     ComposerCircleButton(
-                        "Stop", systemImage: "stop.fill", size: controlHeight, prominent: true, action: onStop)
+                        "Stop", systemImage: "stop.fill", size: buttonSize, prominent: true, action: onStop)
                 } else {
                     ComposerCircleButton(
-                        "Send", systemImage: "arrow.up", size: controlHeight, prominent: true, action: onSend)
+                        "Send", systemImage: "arrow.up", size: buttonSize, prominent: true, action: onSend)
                         .disabled(!canSend)
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .glassEffect(.regular, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
-    }
-}
-
-/// The model of the conversation, in a capsule: the model name, then its provider in a lighter tone.
-/// The model is fixed when a conversation starts, so the badge is not a button.
-private struct ModelBadge: View {
-    let model: ModelChoice
-    let height: CGFloat
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(model.model)
-            if let provider = model.provider {
-                Text(provider)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .font(.subheadline)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .padding(.horizontal, 14)
-        .frame(height: height)
-        .glassEffect(.regular, in: .capsule)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Model: \(model.displayName)")
     }
 }
 
