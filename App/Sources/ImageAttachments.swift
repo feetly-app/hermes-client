@@ -41,6 +41,12 @@ enum ImageAttachmentLoader {
 
     /// A small preview of image data, or `nil` when the data is not a readable image.
     static func thumbnail(for data: Data, maxPixelSize: Int = 240) -> Image? {
+        preview(for: data, maxPixelSize: maxPixelSize)?.image
+    }
+
+    /// A preview of image data with its size in pixels, oriented, or `nil` when the data is not a readable
+    /// image. The size gives the aspect ratio a message draws the image at.
+    static func preview(for data: Data, maxPixelSize: Int) -> ImagePreview? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -50,6 +56,20 @@ enum ImageAttachmentLoader {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        return Image(decorative: cgImage, scale: 1)
+        return ImagePreview(
+            image: Image(decorative: cgImage, scale: 1),
+            pixelSize: CGSize(width: cgImage.width, height: cgImage.height)
+        )
+    }
+}
+
+/// A decoded image and its size in pixels.
+struct ImagePreview {
+    let image: Image
+    let pixelSize: CGSize
+
+    /// Width over height, 1 for an empty size.
+    var aspectRatio: CGFloat {
+        pixelSize.height > 0 && pixelSize.width > 0 ? pixelSize.width / pixelSize.height : 1
     }
 }

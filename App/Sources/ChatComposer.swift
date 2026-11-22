@@ -38,6 +38,8 @@ struct ChatComposer: View {
     let onStop: () -> Void
 
     @State private var isExpanded = false
+    @State private var viewedImage: ViewedImage?
+    @Namespace private var imageNamespace
     @State private var singleLineHeight: CGFloat = 0
     @State private var compactTextWidth: CGFloat = 0
     @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
@@ -49,12 +51,19 @@ struct ChatComposer: View {
                     HStack(spacing: 10) {
                         ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, image in
                             PendingImageThumbnail(data: image.data) {
+                                viewedImage = ViewedImage(id: "pending-\(index)", data: image.data)
+                            } onRemove: {
                                 onRemoveImage(index)
                             }
+                            .imageViewerSource(
+                                id: "pending-\(index)", in: imageNamespace,
+                                cornerRadius: PendingImageThumbnail.cornerRadius
+                            )
                         }
                     }
                 }
                 .scrollIndicators(.hidden)
+                .imageViewer($viewedImage, in: imageNamespace)
             }
 
             ComposerInputLayout(isExpanded: isExpanded, buttonSize: buttonSize, spacing: 8) {
@@ -195,29 +204,39 @@ private struct ComposerCircleButton: View {
     }
 }
 
+/// An image waiting to be sent. A tap opens it full size; the cross removes it.
 private struct PendingImageThumbnail: View {
     let data: Data
+    let onOpen: () -> Void
     let onRemove: () -> Void
 
+    static let cornerRadius: CGFloat = 14
+
     var body: some View {
-        (ImageAttachmentLoader.thumbnail(for: data) ?? Image(systemName: "photo"))
-            .resizable()
-            .scaledToFill()
-            .frame(width: 80, height: 80)
-            .clipShape(.rect(cornerRadius: 14))
-            .overlay(alignment: .topTrailing) {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.black)
-                        .frame(width: 24, height: 24)
-                        .background(.white, in: .circle)
-                        .contentShape(.circle)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Remove image")
-                .padding(5)
+        Button(action: onOpen) {
+            (ImageAttachmentLoader.thumbnail(for: data) ?? Image(systemName: "photo"))
+                .resizable()
+                .scaledToFill()
+                .frame(width: 80, height: 80)
+                .clipShape(.rect(cornerRadius: Self.cornerRadius, style: .continuous))
+                .contentShape(.rect(cornerRadius: Self.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Image")
+        .accessibilityHint("Opens the image full size")
+        .overlay(alignment: .topTrailing) {
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.black)
+                    .frame(width: 24, height: 24)
+                    .background(.white, in: .circle)
+                    .contentShape(.circle)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove image")
+            .padding(5)
+        }
     }
 }
 
