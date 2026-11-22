@@ -16,7 +16,7 @@ struct MessageImages: View {
     /// `.trailing` for a message from the user.
     var alignment: HorizontalAlignment = .leading
 
-    @State private var opened: OpenedImage?
+    @State private var opened: ViewedImage?
     @Namespace private var namespace
 
     var body: some View {
@@ -37,35 +37,15 @@ struct MessageImages: View {
                 .defaultScrollAnchor(alignment == .trailing ? .trailing : .leading)
             }
         }
-        #if os(iOS)
-            .fullScreenCover(item: $opened) { opened in
-                ImageViewer(data: opened.data)
-                    .navigationTransition(.zoom(sourceID: opened.index, in: namespace))
-            }
-        #else
-            .sheet(item: $opened) { opened in
-                ImageViewer(data: opened.data)
-            }
-        #endif
+        .imageViewer($opened, in: namespace)
     }
 
     private func tile(at index: Int, style: ImageLayout.Style) -> some View {
         MessageImageTile(image: images[index], loader: loader, style: style) { data in
-            opened = OpenedImage(index: index, data: data)
+            opened = ViewedImage(id: "\(index)", data: data)
         }
-        #if os(iOS)
-            .matchedTransitionSource(id: index, in: namespace) { source in
-                source.clipShape(.rect(cornerRadius: style.cornerRadius, style: .continuous))
-            }
-        #endif
+        .imageViewerSource(id: "\(index)", in: namespace, cornerRadius: style.cornerRadius)
     }
-}
-
-private struct OpenedImage: Identifiable {
-    let index: Int
-    let data: Data
-
-    var id: Int { index }
 }
 
 /// Sizes and corner radii of message images.
@@ -225,105 +205,5 @@ private struct UnavailableImage: View {
         .overlay(shape.strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Image not available")
-    }
-}
-
-/// One image, full size, on black. Pinch or double-tap to zoom, drag to look around a zoomed image.
-/// On iOS, a swipe down closes it back into its thumbnail.
-private struct ImageViewer: View {
-    let data: Data
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var zoom: CGFloat = 1
-    @GestureState private var pinch: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @GestureState private var drag: CGSize = .zero
-    @State private var preview: ImagePreview?
-
-    private static let maxZoom: CGFloat = 4
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            if let preview {
-                preview.image
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(zoom * pinch)
-                    .offset(x: offset.width + drag.width, y: offset.height + drag.height)
-                    .gesture(magnify)
-                    .gesture(pan, including: zoom > 1 ? .all : .subviews)
-                    .onTapGesture(count: 2) {
-                        withAnimation(.snappy) {
-                            zoom = zoom > 1 ? 1 : 2.5
-                            offset = .zero
-                        }
-                    }
-                    .accessibilityLabel("Image")
-                    .accessibilityAddTraits(.isImage)
-            } else {
-                ContentUnavailableView("Unreadable image", systemImage: "photo")
-                    .foregroundStyle(.white)
-            }
-        }
-        .overlay(alignment: .top) { toolbar }
-        .onAppear {
-            preview = ImageAttachmentLoader.preview(for: data, maxPixelSize: 4096)
-        }
-        #if os(macOS)
-            .frame(minWidth: 560, minHeight: 420)
-        #endif
-    }
-
-    private var toolbar: some View {
-        HStack {
-            if let preview {
-                ShareLink(item: preview.image, preview: SharePreview("Image", image: preview.image)) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 22, height: 22)
-                }
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Label("Close", systemImage: "xmark")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 22, height: 22)
-            }
-            .keyboardShortcut(.cancelAction)
-        }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .controlSize(.large)
-        .padding(.horizontal)
-        .padding(.top, 8)
-    }
-
-    private var magnify: some Gesture {
-        MagnifyGesture()
-            .updating($pinch) { value, state, _ in
-                state = value.magnification
-            }
-            .onEnded { value in
-                withAnimation(.snappy) {
-                    zoom = min(max(zoom * value.magnification, 1), Self.maxZoom)
-                    if zoom == 1 {
-                        offset = .zero
-                    }
-                }
-            }
-    }
-
-    private var pan: some Gesture {
-        DragGesture()
-            .updating($drag) { value, state, _ in
-                state = value.translation
-            }
-            .onEnded { value in
-                offset.width += value.translation.width
-                offset.height += value.translation.height
-            }
     }
 }
