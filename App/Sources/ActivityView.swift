@@ -3,11 +3,12 @@ import HermesChat
 import SwiftUI
 
 /// What the agent did between two replies: the tools it ran and its reasoning, one compact row each, under
-/// a header that folds the group. A tap on a row shows its arguments and what the tool returned.
+/// a header that folds the group. The group starts folded: the header alone says how many tools ran, and a
+/// spinner shows while one is running. A tap on a row shows its arguments and what the tool returned.
 struct ActivityView: View {
     let steps: [ActivityStep]
 
-    @State private var isExpanded = true
+    @State private var isExpanded = false
 
     private var toolCount: Int { steps.count { $0.kind == .tool } }
     private var isRunning: Bool { steps.contains { $0.status == .running } }
