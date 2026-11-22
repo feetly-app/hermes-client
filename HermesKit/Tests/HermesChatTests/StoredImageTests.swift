@@ -81,44 +81,103 @@ struct StoredImageMarkersTests {
     }
 }
 
-@Suite("Sent image store")
-struct SentImageStoreTests {
+/// Answers from a dictionary of digests and counts the fetches.
+private actor FakeImageFetcher: StoredImageFetching {
+    var images: [String: ImageAttachment]
+    var failing = false
+    private(set) var fetches: [String] = []
+
+    init(images: [String: ImageAttachment] = [:]) {
+        self.images = images
+    }
+
+    func setFailing(_ value: Bool) { failing = value }
+
+    func image(sha256: String) async throws -> ImageAttachment? {
+        fetches.append(sha256)
+        try await Task.sleep(for: .milliseconds(20))
+        if failing { throw HermesAPIError.network }
+        return images[sha256]
+    }
+}
+
+@Suite("Stored image loader")
+struct StoredImageLoaderTests {
+    private let digest = String(repeating: "a", count: 64)
+
     private func image(_ text: String, mimeType: String = "image/png") throws -> ImageAttachment {
         try #require(ImageAttachment(mimeType: mimeType, data: Data(text.utf8)))
     }
 
-    @Test("SHA-256 matches known vectors")
-    func digestVectors() {
-        #expect(sha256Hex(Data()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-        #expect(sha256Hex(Data("abc".utf8)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
-        let long = Data("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".utf8)
-        #expect(sha256Hex(long) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
-        #expect(
-            sha256Hex(Data(repeating: 0x61, count: 1000))
-                == "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3")
+    private func temporaryCache() -> StoredImageCache {
+        StoredImageCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     }
 
-    @Test("a saved image is found by the digest of its bytes, with its type")
-    func directoryRoundTrip() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = DirectorySentImageStore(directory: directory)
+    @Test("an image is fetched once, kept in the cache, and found again by digest in any case")
+    func fetchesThenCaches() async throws {
         let photo = try image("png bytes")
+        let fetcher = FakeImageFetcher(images: [digest: photo])
+        let cache = temporaryCache()
+        defer { try? FileManager.default.removeItem(at: cache.directory) }
+        let loader = StoredImageLoader(fetcher: fetcher, cache: cache)
 
-        store.save(photo)
-
-        #expect(store.image(sha256: sha256Hex(photo.data)) == photo)
-        #expect(store.image(sha256: String(repeating: "0", count: 64)) == nil)
-        #expect(store.image(sha256: "../etc/passwd") == nil)
+        #expect(await loader.image(sha256: digest.uppercased()) == photo)
+        #expect(await loader.image(sha256: digest) == photo)
+        #expect(await fetcher.fetches == [digest])
+        #expect(cache.image(sha256: digest) == photo)
     }
 
-    @Test("the in-memory store finds an image by digest, in any case")
-    func inMemory() throws {
-        let store = InMemorySentImageStore()
-        let photo = try image("jpeg bytes", mimeType: "image/jpeg")
+    @Test("concurrent requests for one digest share a single fetch")
+    func sharesInFlightFetch() async throws {
+        let photo = try image("gif bytes", mimeType: "image/gif")
+        let fetcher = FakeImageFetcher(images: [digest: photo])
+        let loader = StoredImageLoader(fetcher: fetcher)
 
-        store.save(photo)
+        async let first = loader.image(sha256: digest)
+        async let second = loader.image(sha256: digest)
+        let results = await [first, second]
 
-        #expect(store.image(sha256: sha256Hex(photo.data).uppercased()) == photo)
+        #expect(results == [photo, photo])
+        #expect(await fetcher.fetches == [digest])
+    }
+
+    @Test("a missing image or a failure gives nil and is not cached; a later call tries again")
+    func failuresAreNotCached() async throws {
+        let photo = try image("webp bytes", mimeType: "image/webp")
+        let fetcher = FakeImageFetcher(images: [digest: photo])
+        let loader = StoredImageLoader(fetcher: fetcher, cache: nil)
+
+        await fetcher.setFailing(true)
+        #expect(await loader.image(sha256: digest) == nil)
+        await fetcher.setFailing(false)
+        #expect(await loader.image(sha256: digest) == photo)
+        #expect(await loader.image(sha256: String(repeating: "b", count: 64)) == nil)
+    }
+
+    @Test("a text that is not a digest is never fetched")
+    func invalidDigest() async {
+        let fetcher = FakeImageFetcher()
+        let loader = StoredImageLoader(fetcher: fetcher)
+
+        #expect(await loader.image(sha256: "../etc/passwd") == nil)
+        #expect(await loader.image(sha256: "abc") == nil)
+        #expect(await fetcher.fetches.isEmpty)
+    }
+
+    @Test("the cache keeps image types and refuses other ones and invalid digests")
+    func cacheRoundTrip() throws {
+        let cache = temporaryCache()
+        defer { try? FileManager.default.removeItem(at: cache.directory) }
+        let jpeg = try image("jpeg bytes", mimeType: "image/jpeg")
+        let svg = try image("<svg/>", mimeType: "image/svg+xml")
+        let other = String(repeating: "c", count: 64)
+
+        cache.save(jpeg, sha256: digest)
+        cache.save(svg, sha256: other)
+        cache.save(jpeg, sha256: "../escape")
+
+        #expect(cache.image(sha256: digest) == jpeg)
+        #expect(cache.image(sha256: other) == nil)
+        #expect(cache.image(sha256: "../escape") == nil)
     }
 }

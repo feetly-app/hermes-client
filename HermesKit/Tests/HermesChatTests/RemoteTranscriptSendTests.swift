@@ -182,20 +182,8 @@ struct RemoteTranscriptSendTests {
         await transcript.send("What is this?", images: [image])
 
         #expect(await source.sentImages == [[image]])
-        #expect(transcript.lines.first?.images == [image])
+        #expect(transcript.lines.first?.images == [.attached(image)])
         #expect(transcript.lines.map(\.text) == ["What is this?", "A cat."])
-    }
-
-    @Test("images sent are copied to the image store, under the digest of their bytes")
-    func imagesAreKept() async throws {
-        let source = FakeChatStreamSource(events: [.completed("A cat."), .finished])
-        let store = InMemorySentImageStore()
-        let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source, imageStore: store)
-        let image = try #require(ImageAttachment(mimeType: "image/jpeg", data: Data([7])))
-
-        await transcript.send("Look", images: [image])
-
-        #expect(store.image(sha256: sha256Hex(image.data)) == image)
     }
 
     @Test("a message with images and no text is sent; images past the limit are dropped")
