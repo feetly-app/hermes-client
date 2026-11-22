@@ -2,8 +2,9 @@ import HermesAPI
 import HermesChat
 import SwiftUI
 
-/// Sidebar: the conversations, most recently used first. Each is a session on the Hermes instance.
-/// Every row can be renamed or deleted, from its context menu or a swipe.
+/// Sidebar: the conversations, most recently used first, one line each (an icon for its kind and the title).
+/// Each is a session on the Hermes instance. Every row can be renamed or deleted, from its context menu or a
+/// swipe.
 struct ConversationListView: View {
     let browser: ConversationBrowser
     /// Set to the reason when a rename or a delete fails.
@@ -17,11 +18,18 @@ struct ConversationListView: View {
 
     var body: some View {
         List(selection: selection) {
-            ForEach(browser.remoteSessions.recentFirst) { session in
-                row(session)
+            let sessions = browser.remoteSessions.recentFirst
+            if !sessions.isEmpty {
+                Section("Recents") {
+                    ForEach(sessions) { session in
+                        row(session)
+                    }
+                }
             }
             RemoteStatusRows(list: browser.remoteSessions)
+                .listRowSeparator(.hidden)
         }
+        .sobreListStyle()
         .task {
             await browser.reloadSessions()
         }
@@ -54,21 +62,31 @@ struct ConversationListView: View {
         }
     }
 
+    /// One line: the icon of the session kind and its title, truncated at the end. The icon takes the color
+    /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
+    /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(session.title ?? ConversationTitle.placeholder)
-                .lineLimit(1)
-            if let lastActive = session.lastActive ?? session.startedAt {
-                Text(lastActive, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: Self.icon(for: session.kind))
+                .foregroundStyle(.primary)
         }
+        .lineLimit(1)
+        .listItemTint(.monochrome)
         .tag(session.id)
+        .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },
             onDelete: { deleting = session.id }
         ))
+    }
+
+    private static func icon(for kind: SessionKind) -> String {
+        switch kind {
+        case .chat: "bubble.left"
+        case .scheduled: "clock"
+        }
     }
 
     private func startRenaming(_ sessionID: String, title: String) {
@@ -111,6 +129,19 @@ struct ConversationListView: View {
 
     private var isDeleting: Binding<Bool> {
         Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+    }
+}
+
+extension View {
+    /// A plain list on iOS, as in the Claude app: rows straight on the screen background, without the grouped
+    /// cards. macOS keeps its native sidebar.
+    @ViewBuilder
+    fileprivate func sobreListStyle() -> some View {
+        #if os(iOS)
+            listStyle(.plain)
+        #else
+            self
+        #endif
     }
 }
 
