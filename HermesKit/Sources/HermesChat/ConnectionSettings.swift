@@ -2,13 +2,35 @@ import Foundation
 
 /// Non-secret connection settings. The API key is stored separately, in a `SecretStore`.
 ///
-/// There is no model here: each conversation picks its own (see `ModelChoice`). Settings saved by older
-/// versions also hold a `model` key; decoding ignores it.
+/// `model` (with its optional `provider`) is the model every new conversation is locked on. Settings saved
+/// by versions that had no model here load with the instance default, `hermes-agent`.
 public struct ConnectionSettings: Codable, Equatable, Sendable {
     public var baseURLString: String
+    public var model: String
+    /// Provider slug of `model` (for example `anthropic`). `nil` lets the instance pick the provider.
+    public var provider: String?
 
-    public init(baseURLString: String) {
+    public init(
+        baseURLString: String,
+        model: String = ModelChoice.instanceDefault.model,
+        provider: String? = nil
+    ) {
         self.baseURLString = baseURLString
+        self.model = model
+        self.provider = provider
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baseURLString = try container.decode(String.self, forKey: .baseURLString)
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ModelChoice.instanceDefault.model
+        provider = try container.decodeIfPresent(String.self, forKey: .provider)
+    }
+
+    /// The model new conversations run on: the trimmed model and provider, or the instance default when the
+    /// model is blank.
+    public var modelChoice: ModelChoice {
+        ModelChoice(model: model, provider: provider).normalized ?? .instanceDefault
     }
 
     /// The base URL if the text is an absolute http(s) URL with a host, otherwise `nil`.
@@ -24,9 +46,9 @@ public struct ConnectionSettings: Codable, Equatable, Sendable {
         return url
     }
 
-    /// `true` when the URL parses.
+    /// `true` when the URL parses and the model name is not blank.
     public var isValid: Bool {
-        Self.parseBaseURL(baseURLString) != nil
+        Self.parseBaseURL(baseURLString) != nil && !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 

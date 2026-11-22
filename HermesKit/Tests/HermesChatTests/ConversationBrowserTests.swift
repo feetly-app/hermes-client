@@ -18,13 +18,9 @@ func waitUntil(_ condition: @MainActor () async -> Bool) async {
 struct ConversationBrowserTests {
     private func makeBrowser(
         instance: FakeInstance = FakeInstance(),
-        lastModel: InMemoryLastModelStorage? = nil
+        model: ModelChoice = ModelChoice(model: "opus", provider: "anthropic")
     ) -> ConversationBrowser {
-        ConversationBrowser(
-            remoteSessions: RemoteSessionList(source: instance),
-            model: "default-model",
-            lastModel: lastModel
-        )
+        ConversationBrowser(remoteSessions: RemoteSessionList(source: instance), model: model)
     }
 
     // MARK: Start
@@ -41,13 +37,12 @@ struct ConversationBrowserTests {
 
     // MARK: New conversation
 
-    @Test("a new conversation is a session created on the instance with its model locked, opened empty")
+    @Test("a new conversation is a session created on the instance with the configured model locked, opened empty")
     func createLocksModel() async throws {
         let instance = FakeInstance()
-        let storage = InMemoryLastModelStorage()
-        let browser = makeBrowser(instance: instance, lastModel: storage)
+        let browser = makeBrowser(instance: instance)
 
-        let session = try await browser.createConversation(model: " opus ", provider: "anthropic")
+        let session = try await browser.createConversation()
 
         #expect(await instance.created == [FakeInstance.Created(model: "opus", provider: "anthropic")])
         #expect(browser.openedRemote?.sessionID == session.id)
@@ -55,7 +50,6 @@ struct ConversationBrowserTests {
         #expect(browser.openedRemote?.state == .loaded)
         #expect(browser.remoteSessions.sessions.first?.id == session.id)
         #expect(browser.selectedSessionID == session.id)
-        #expect(storage.load() == ModelChoice(model: "opus", provider: "anthropic"))
         #expect(!browser.isCreating)
         // Nothing to load: the session was just created.
         #expect(await instance.messageRequests.isEmpty)
@@ -64,39 +58,19 @@ struct ConversationBrowserTests {
     @Test("the instance default model is not sent: the instance picks its configured model")
     func createWithInstanceDefault() async throws {
         let instance = FakeInstance()
-        let browser = makeBrowser(instance: instance)
-
-        try await browser.createConversation(model: "hermes-agent")
-
-        #expect(await instance.created == [FakeInstance.Created(model: nil, provider: nil)])
-        #expect(browser.openedRemote?.model == ModelChoice.instanceDefault)
-    }
-
-    @Test("without a choice, a new conversation runs on the last used model and saves nothing")
-    func createWithoutChoiceUsesLastModel() async throws {
-        let instance = FakeInstance()
-        let storage = InMemoryLastModelStorage(choice: ModelChoice(model: "saved", provider: "openai"))
-        let browser = makeBrowser(instance: instance, lastModel: storage)
+        let browser = ConversationBrowser(remoteSessions: RemoteSessionList(source: instance))
 
         try await browser.createConversation()
 
-        #expect(await instance.created == [FakeInstance.Created(model: "saved", provider: "openai")])
-        #expect(storage.load() == ModelChoice(model: "saved", provider: "openai"))
-    }
-
-    @Test("with nothing saved, new conversations start on the default model")
-    func defaultWhenNothingSaved() {
-        let browser = makeBrowser(lastModel: InMemoryLastModelStorage())
-
-        #expect(browser.preferredChoice == ModelChoice(model: "default-model"))
-        #expect(browser.defaultChoice == ModelChoice(model: "default-model"))
+        #expect(await instance.created == [FakeInstance.Created(model: nil, provider: nil)])
+        #expect(browser.openedRemote?.model == ModelChoice.instanceDefault)
     }
 
     @Test("a new conversation left before any message is deleted from the instance and the list")
     func abandonedNewConversationIsDeleted() async throws {
         let instance = FakeInstance()
         let browser = makeBrowser(instance: instance)
-        let session = try await browser.createConversation(model: "opus")
+        let session = try await browser.createConversation()
 
         browser.selectSession(nil)
 
@@ -111,9 +85,9 @@ struct ConversationBrowserTests {
     func secondNewConversationReplacesUntouched() async throws {
         let instance = FakeInstance()
         let browser = makeBrowser(instance: instance)
-        let first = try await browser.createConversation(model: "opus")
+        let first = try await browser.createConversation()
 
-        let second = try await browser.createConversation(model: "opus")
+        let second = try await browser.createConversation()
 
         await waitUntil { await instance.deleted == [first.id] }
         #expect(await instance.deleted == [first.id])
@@ -124,7 +98,7 @@ struct ConversationBrowserTests {
     func usedNewConversationIsKept() async throws {
         let instance = FakeInstance(titleAfterReply: "Trip plans")
         let browser = makeBrowser(instance: instance)
-        let session = try await browser.createConversation(model: "opus")
+        let session = try await browser.createConversation()
         let transcript = try #require(browser.openedRemote)
 
         await transcript.send("Plan a trip")

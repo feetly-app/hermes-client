@@ -44,7 +44,7 @@ actor HangingChatStreamSource: SessionListing {
 @Suite("ConversationBrowser live replies")
 struct ConversationBrowserLiveReplyTests {
     private func makeBrowser(source: any SessionListing) -> ConversationBrowser {
-        ConversationBrowser(remoteSessions: RemoteSessionList(source: source), model: "m")
+        ConversationBrowser(remoteSessions: RemoteSessionList(source: source), model: ModelChoice(model: "m"))
     }
 
     @Test("a session left while its reply streams opens again on the same transcript, not reloaded")

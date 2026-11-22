@@ -9,8 +9,6 @@ import Observation
 final class AppState {
     private(set) var settings: ConnectionSettings?
     private(set) var browser: ConversationBrowser?
-    /// Lists the instance models for the new conversation screen. Set together with `browser`.
-    private(set) var modelCatalog: (any ModelCatalog)?
 
     private let settingsStorage: any SettingsStorage
     private let secrets: any SecretStore
@@ -45,14 +43,12 @@ final class AppState {
               let key = apiKey, !key.isEmpty
         else {
             browser = nil
-            modelCatalog = nil
             return
         }
         let client = HermesClient(configuration: HermesClientConfiguration(baseURL: baseURL, apiKey: key))
         browser = ConversationBrowser(
             remoteSessions: RemoteSessionList(source: client, imageStore: DirectorySentImageStore.inCaches()),
-            lastModel: UserDefaultsLastModelStorage()
+            model: settings.modelChoice
         )
-        modelCatalog = client
     }
 }
