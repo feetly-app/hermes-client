@@ -11,13 +11,6 @@ extension View {
         #endif
     }
 
-    /// Hides the tab bar while this view is shown on a compact width, where it fills the screen (a pushed
-    /// conversation on iPhone). On regular widths the view shares the screen with others that need the tab
-    /// bar, so it stays. macOS shows tabs in the window toolbar: no-op there.
-    func hidesTabBarWhenCompact() -> some View {
-        modifier(CompactTabBarHider())
-    }
-
     /// Hides the keyboard of a conversation screen two ways: a tap anywhere in the messages, and the
     /// native interactive dismiss, where the keyboard follows a finger dragging down past its top edge.
     /// iOS only: macOS has no software keyboard.
@@ -37,16 +30,13 @@ extension View {
     }
 }
 
-private struct CompactTabBarHider: ViewModifier {
-    #if os(iOS)
-        @Environment(\.horizontalSizeClass) private var sizeClass
-    #endif
-
-    func body(content: Content) -> some View {
+extension ToolbarItemPlacement {
+    /// The leading edge of the navigation bar on iOS, the leading side of the window toolbar on macOS.
+    static var leadingAction: ToolbarItemPlacement {
         #if os(iOS)
-            content.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
+            .topBarLeading
         #else
-            content
+            .navigation
         #endif
     }
 }

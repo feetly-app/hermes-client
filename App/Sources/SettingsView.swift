@@ -1,9 +1,11 @@
 import HermesChat
 import SwiftUI
 
-/// Connection settings: instance URL, model and API key. Shown on first launch and from the chat screen.
+/// Connection settings: instance URL, model and API key. Shown alone on first launch, and as a sheet from
+/// the conversation list, where `canCancel` adds a Cancel button.
 struct SettingsView: View {
     let appState: AppState
+    let canCancel: Bool
     @Environment(\.dismiss) private var dismiss
 
     @State private var baseURL: String
@@ -14,8 +16,9 @@ struct SettingsView: View {
     @State private var isTesting = false
     @State private var testOutcome: ConnectionTestOutcome?
 
-    init(appState: AppState) {
+    init(appState: AppState, canCancel: Bool = false) {
         self.appState = appState
+        self.canCancel = canCancel
         _baseURL = State(initialValue: appState.settings?.baseURLString ?? "")
         _model = State(initialValue: appState.settings?.model ?? ModelChoice.instanceDefault.model)
         _provider = State(initialValue: appState.settings?.provider ?? "")
@@ -79,6 +82,11 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .toolbar {
+                if canCancel {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save", action: save)
                         .disabled(!canSave)

@@ -2,12 +2,15 @@ import HermesAPI
 import HermesChat
 import SwiftUI
 
-/// Chat tab: a split view with the conversation list and the open conversation.
+/// Main screen: a split view with the conversation list and the open conversation.
 /// A new conversation is a session created on the instance, on the model set in the connection settings.
 /// On compact widths the split view collapses into a navigation stack.
 struct ConversationsView: View {
     let browser: ConversationBrowser
+    /// Edited by the settings sheet.
+    let appState: AppState
 
+    @State private var isShowingSettings = false
     /// Why the last action on a conversation failed, shown in an alert.
     @State private var failure: String?
 
@@ -16,6 +19,11 @@ struct ConversationsView: View {
             ConversationListView(browser: browser, failure: $failure)
                 .navigationTitle("Conversations")
                 .toolbar {
+                    ToolbarItem(placement: .leadingAction) {
+                        Button("Settings", systemImage: "gearshape") {
+                            isShowingSettings = true
+                        }
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
                             .disabled(browser.isCreating)
@@ -39,8 +47,9 @@ struct ConversationsView: View {
                     }
                 }
             }
-            // On iPhone an open conversation fills the screen: the tab bar comes back with the list.
-            .hidesTabBarWhenCompact()
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsView(appState: appState, canCancel: true)
         }
         .alert(
             "Something went wrong",
