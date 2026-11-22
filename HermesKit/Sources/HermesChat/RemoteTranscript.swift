@@ -18,6 +18,9 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
     /// Set when the instance wrote the line itself, such as the results of a background task handed to the
     /// agent: a short label to show instead of a user message. `text` keeps the full content.
     public let notice: String?
+    /// The tools the agent ran and its reasoning, in order. Stored messages put them on lines of their own,
+    /// with no text; a reply being streamed carries its steps above its text.
+    public var steps: [ActivityStep]
 
     public init(
         id: String,
@@ -26,7 +29,8 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
         date: Date?,
         images: [ImageAttachment] = [],
         missingImageCount: Int = 0,
-        notice: String? = nil
+        notice: String? = nil,
+        steps: [ActivityStep] = []
     ) {
         self.id = id
         self.role = role
@@ -35,13 +39,18 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
         self.images = images
         self.missingImageCount = missingImageCount
         self.notice = notice
+        self.steps = steps
     }
+
+    /// `true` for a line that only shows what the agent did, with no message text.
+    public var isActivity: Bool { !steps.isEmpty && text.isEmpty && images.isEmpty && missingImageCount == 0 }
 }
 
 /// A conversation: the messages of a session stored on the Hermes instance, and a way to continue it.
 ///
-/// Only user and assistant messages with text or images are kept. Tool, system and compaction rows, and
-/// rows the instance marks as hidden, are dropped. The first page holds the newest messages; each further
+/// User and assistant messages with text or images are kept. The tools an assistant row calls, the results
+/// of the `tool` rows that answer them and the model's reasoning become activity lines, see `ActivityStep`.
+/// System and compaction rows, and rows the instance marks as hidden, are dropped. The first page holds the newest messages; each further
 /// page holds older ones and is put above the lines already shown. Pages are requested with an offset
 /// counted in received messages, not in displayed lines.
 ///
@@ -141,31 +150,78 @@ public final class RemoteTranscript: Identifiable {
         from messages: [SessionMessage],
         imageStore: (any SentImageStore)? = nil
     ) -> [TranscriptLine] {
-        messages.compactMap { message in
-            guard message.displayKind != "hidden",
-                  message.role == "user" || message.role == "assistant"
-            else { return nil }
-            if let notice = notice(for: message) {
-                return TranscriptLine(
-                    id: message.id, role: message.role, text: message.content ?? "", date: message.timestamp,
-                    notice: notice
-                )
+        var lines: [TranscriptLine] = []
+        /// Index in `lines` of the activity line still taking steps, if any.
+        var openActivity: Int?
+        /// Where each tool call sits, to put its result in place: line index, step index.
+        var callPositions: [String: (line: Int, step: Int)] = [:]
+
+        func append(_ step: ActivityStep, startingAt rowID: String) -> Int {
+            if let index = openActivity {
+                lines[index].steps.append(step)
+                return index
             }
-            let content = message.displayContent ?? steerText(of: message) ?? message.content ?? ""
-            let (text, references) = StoredImageMarkers.parse(content)
-            let images = references.compactMap { reference in
-                reference.sha256.flatMap { imageStore?.image(sha256: $0) }
-            }
-            guard !text.isEmpty || !references.isEmpty else { return nil }
-            return TranscriptLine(
-                id: message.id,
-                role: message.role,
-                text: text,
-                date: message.timestamp,
-                images: images,
-                missingImageCount: references.count - images.count
-            )
+            lines.append(TranscriptLine(id: "activity-\(rowID)", role: "assistant", text: "", date: nil, steps: [step]))
+            openActivity = lines.count - 1
+            return lines.count - 1
         }
+
+        for message in messages where message.displayKind != "hidden" {
+            switch message.role {
+            case "tool":
+                guard let callID = message.toolCallID, let position = callPositions[callID] else { continue }
+                var step = lines[position.line].steps[position.step]
+                step.result = message.content
+                step.status = ActivityStep.status(forResult: message.content, arguments: step.argumentObject)
+                lines[position.line].steps[position.step] = step
+            case "assistant":
+                if let reasoning = message.reasoning {
+                    _ = append(.thinking(id: "thinking-\(message.id)", text: reasoning), startingAt: message.id)
+                }
+                if let line = messageLine(message, imageStore: imageStore) {
+                    openActivity = nil
+                    lines.append(line)
+                }
+                for call in message.toolCalls {
+                    let step = ActivityStep(id: call.id, name: call.name, arguments: call.arguments)
+                    let index = append(step, startingAt: message.id)
+                    callPositions[call.id] = (index, lines[index].steps.count - 1)
+                }
+            case "user":
+                openActivity = nil
+                if let notice = notice(for: message) {
+                    lines.append(
+                        TranscriptLine(
+                            id: message.id, role: message.role, text: message.content ?? "", date: message.timestamp,
+                            notice: notice
+                        )
+                    )
+                } else if let line = messageLine(message, imageStore: imageStore) {
+                    lines.append(line)
+                }
+            default:
+                continue
+            }
+        }
+        return lines
+    }
+
+    /// The text and images of a user or assistant row, or `nil` when it has neither.
+    private static func messageLine(_ message: SessionMessage, imageStore: (any SentImageStore)?) -> TranscriptLine? {
+        let content = message.displayContent ?? steerText(of: message) ?? message.content ?? ""
+        let (text, references) = StoredImageMarkers.parse(content)
+        let images = references.compactMap { reference in
+            reference.sha256.flatMap { imageStore?.image(sha256: $0) }
+        }
+        guard !text.isEmpty || !references.isEmpty else { return nil }
+        return TranscriptLine(
+            id: message.id,
+            role: message.role,
+            text: text,
+            date: message.timestamp,
+            images: images,
+            missingImageCount: references.count - images.count
+        )
     }
 
     /// The user's words in a message sent while a reply was running (`display_kind` `steer`), or `nil`.
@@ -365,6 +421,18 @@ public final class RemoteTranscript: Identifiable {
                     }
                 case .failed(let reason):
                     sendError = reason
+                case .toolStarted(let name, let preview, let arguments):
+                    addStep(
+                        ActivityStep(
+                            id: "local-step-\(UUID().uuidString)", name: name, arguments: arguments ?? "",
+                            preview: preview, status: .running
+                        ),
+                        to: replyID
+                    )
+                case .toolFinished(let name, let preview, let failed):
+                    finishStep(named: name, result: preview, failed: failed, in: replyID)
+                case .thinking(let text):
+                    addThinking(text, to: replyID)
                 case .finished:
                     break
                 }
@@ -374,9 +442,53 @@ public final class RemoteTranscript: Identifiable {
         } catch {
             sendError = HermesAPIError.from(error).errorDescription ?? "The message could not be sent."
         }
-        if let index = lines.firstIndex(where: { $0.id == replyID }), lines[index].text.isEmpty {
+        // A tool still marked as running when the reply ends will not report back on this stream.
+        updateSteps(of: replyID) { steps in
+            for index in steps.indices where steps[index].status == .running {
+                steps[index].status = .done
+            }
+        }
+        if let index = lines.firstIndex(where: { $0.id == replyID }), lines[index].text.isEmpty,
+           lines[index].steps.isEmpty
+        {
             lines.remove(at: index)
         }
+    }
+
+    // The live steps of a reply are kept on its own line, above its text. Inserting a separate line while the
+    // reply streams makes the lazy transcript lose its scroll position.
+
+    /// Adds a step to the reply being streamed.
+    private func addStep(_ step: ActivityStep, to replyID: String) {
+        updateSteps(of: replyID) { $0.append(step) }
+    }
+
+    /// Reasoning arrives in pieces: they extend the last thinking step, or start a new one.
+    private func addThinking(_ text: String, to replyID: String) {
+        updateSteps(of: replyID) { steps in
+            if let last = steps.indices.last, steps[last].kind == .thinking {
+                steps[last].result = (steps[last].result ?? "") + text
+            } else {
+                steps.append(.thinking(id: "local-thinking-\(UUID().uuidString)", text: text))
+            }
+        }
+    }
+
+    /// Marks the oldest running step of the tool `name` as finished. Live events carry no call id: calls of one
+    /// tool finish in the order they started.
+    private func finishStep(named name: String, result: String?, failed: Bool, in replyID: String) {
+        updateSteps(of: replyID) { steps in
+            guard let index = steps.firstIndex(where: { $0.name == name && $0.status == .running }) else { return }
+            steps[index].result = result
+            steps[index].status = failed
+                ? .failed
+                : ActivityStep.status(forResult: result, arguments: steps[index].argumentObject)
+        }
+    }
+
+    private func updateSteps(of lineID: String, _ update: (inout [ActivityStep]) -> Void) {
+        guard let index = lines.firstIndex(where: { $0.id == lineID }) else { return }
+        update(&lines[index].steps)
     }
 
     private func setReply(id: String, _ update: (String) -> String) {
@@ -384,7 +496,7 @@ public final class RemoteTranscript: Identifiable {
         let line = lines[index]
         lines[index] = TranscriptLine(
             id: line.id, role: line.role, text: update(line.text), date: line.date,
-            images: line.images, missingImageCount: line.missingImageCount, notice: line.notice
+            images: line.images, missingImageCount: line.missingImageCount, notice: line.notice, steps: line.steps
         )
     }
 }

@@ -99,6 +99,15 @@ struct ChatView: View {
                     scrollToEnd(animation: .default)
                 }
             }
+            // A step of the reply being streamed makes its line taller. The lazy stack can stop drawing its rows
+            // when a line grows under a scroll to the end, leaving the viewport blank: the scroll is asked again,
+            // which also keeps the newest step in view while the reader follows the end.
+            .onChange(of: transcript.lines.last?.steps.count) { _, _ in
+                if transcript.isSending, isAtBottom || endRetries > 0 {
+                    endRetries = max(endRetries, 1)
+                    scrollToEnd(animation: nil)
+                }
+            }
             // The lines scroll beneath the composer.
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 composerArea
@@ -306,6 +315,11 @@ struct MessageRow: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             VStack(alignment: .leading, spacing: 6) {
+                // The tools the agent ran: a line of their own, or above the text of a reply being streamed.
+                if !line.steps.isEmpty {
+                    ActivityView(steps: line.steps)
+                        .padding(.bottom, line.text.isEmpty ? 0 : 18)
+                }
                 images
                 MarkdownView(source: line.text)
             }
