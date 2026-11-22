@@ -5,17 +5,19 @@ import SwiftUI
 /// The message composer floating over the bottom of a conversation: a rounded glass card with the
 /// images waiting to be sent, the text field, and the action buttons (add, send or stop).
 ///
-/// Layout mirrors ChatGPT: single-row (HStack) when the draft fits on one line, then animates to a
-/// stacked layout (text full-width on top, button row below) as the user types.
+/// Layout mirrors ChatGPT: single-row when the draft fits on one line, then animates to a stacked
+/// layout (text full-width on top, button row below) as the user types.
 ///
-/// A hidden measurement TextField — always constrained to the compact text-field width (the width
-/// it has when squeezed between buttons) — drives the transition. Its height compared against the
-/// single-line baseline is the sole criterion for expand and collapse: no hardcoded character
-/// count, no dependency on screen size, works at any Dynamic Type setting.
+/// **Keyboard preservation**: the TextField sits at a fixed structural position inside a VStack
+/// that is always present in the layout. The action buttons slide in and out (their frame width
+/// animates to/from zero) around it rather than the whole branch being replaced, so SwiftUI never
+/// removes and re-creates the TextField across the transition and the keyboard stays up.
 ///
-/// Using compact width for both expand and collapse avoids the feedback loop that would occur if
-/// collapse used the wider full-width height: switching to expanded gives the text field more
-/// horizontal space → height shrinks → collapse → compact shrinks space → text wraps → expand → …
+/// **Expansion detection**: a hidden measurement TextField constrained to the compact width
+/// (captured once from the real field's onGeometryChange while !isExpanded) drives `isExpanded`
+/// via its height. Using the same compact width for both expand and collapse avoids the feedback
+/// loop that occurs if collapse uses the wider full-width height: expanded → text field wider →
+/// height shrinks → collapse → narrower → text wraps → expand → …
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -61,21 +63,36 @@ struct ChatComposer: View {
                 .scrollIndicators(.hidden)
             }
 
-            if isExpanded {
-                // Expanded: text takes the full card width, action buttons sit below.
+            // The input area uses a fixed structure so the TextField is never removed and
+            // re-added during the layout transition (which would dismiss the keyboard).
+            //
+            // Compact: HStack with buttons visible at full buttonSize width.
+            // Expanded: same HStack, buttons animated to width 0 and clipped out; the VStack
+            //           below the TextField grows to show the action row.
+            //
+            // spacing also animates to 0 when buttons collapse so there is no phantom gap.
+            HStack(alignment: .bottom, spacing: isExpanded ? 0 : 8) {
+                // Add button: always rendered at a stable position; collapses to 0 when expanded.
+                if let onAdd {
+                    ComposerCircleButton("Add images", systemImage: "plus", size: buttonSize, action: onAdd)
+                        .disabled(isBusy)
+                        .frame(width: isExpanded ? 0 : buttonSize)
+                        .clipped()
+                }
+
+                // The TextField is always inside this VStack at child index 0 — never moved,
+                // never recreated. Focus (and the keyboard) survive the layout change.
                 VStack(alignment: .leading, spacing: 8) {
                     composerTextField
-                    actionRow
+                    if isExpanded {
+                        actionRow
+                    }
                 }
-                .transition(.identity)
-            } else {
-                // Compact: single row — add button · text field · send/stop button.
-                HStack(alignment: .bottom, spacing: 8) {
-                    addButton
-                    composerTextField
-                    sendStopButton
-                }
-                .transition(.identity)
+
+                // Send/stop: collapses to 0 when expanded (also shown in actionRow).
+                sendStopButton
+                    .frame(width: isExpanded ? 0 : buttonSize)
+                    .clipped()
             }
         }
         .padding(.horizontal, 12)
