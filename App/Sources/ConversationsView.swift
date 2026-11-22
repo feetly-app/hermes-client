@@ -48,6 +48,8 @@ struct ConversationsView: View {
                 }
             }
         }
+        // ⌘N in the menu bar, see `NewConversationCommand`.
+        .focusedSceneValue(\.newConversation, newConversationAction)
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(appState: appState, canCancel: true)
         }
@@ -60,6 +62,12 @@ struct ConversationsView: View {
         } message: { message in
             Text(message)
         }
+    }
+
+    /// `nil` while a conversation is being created or the settings are shown: the menu item is disabled.
+    private var newConversationAction: (@MainActor () -> Void)? {
+        guard !browser.isCreating, !isShowingSettings else { return nil }
+        return { startConversation() }
     }
 
     private func startConversation() {

@@ -8,5 +8,8 @@ struct HermesApp: App {
                 // The app is designed for a dark background (the icon and accent colour are tuned for it).
                 .preferredColorScheme(.dark)
         }
+        .commands {
+            NewConversationCommand()
+        }
     }
 }

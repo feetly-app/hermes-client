@@ -109,6 +109,7 @@ struct ChatComposer: View {
             .textFieldStyle(.plain)
             .lineLimit(1 ... 6)
             .padding(.vertical, 7)
+            .sendsOnReturn(isActive: isFocused.wrappedValue, canSend: canSend && !isBusy, action: onSend)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
                 if !isExpanded, w > 0 { compactTextWidth = w }
             }
