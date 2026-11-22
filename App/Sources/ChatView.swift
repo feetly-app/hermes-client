@@ -40,7 +40,11 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     ForEach(transcript.lines) { line in
-                        MessageRow(line: line)
+                        if let notice = line.notice {
+                            NoticeRow(label: notice, details: line.text)
+                        } else {
+                            MessageRow(line: line)
+                        }
                     }
                 }
                 .scrollTargetLayout()
@@ -93,6 +97,15 @@ struct ChatView: View {
                 if oldID != nil, lastID != nil {
                     endRetries = 2
                     scrollToEnd(animation: .default)
+                }
+            }
+            // A step of the reply being streamed makes its line taller. The lazy stack can stop drawing its rows
+            // when a line grows under a scroll to the end, leaving the viewport blank: the scroll is asked again,
+            // which also keeps the newest step in view while the reader follows the end.
+            .onChange(of: transcript.lines.last?.steps.count) { _, _ in
+                if transcript.isSending, isAtBottom || endRetries > 0 {
+                    endRetries = max(endRetries, 1)
+                    scrollToEnd(animation: nil)
                 }
             }
             // The lines scroll beneath the composer.
@@ -302,6 +315,11 @@ struct MessageRow: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             VStack(alignment: .leading, spacing: 6) {
+                // The tools the agent ran: a line of their own, or above the text of a reply being streamed.
+                if !line.steps.isEmpty {
+                    ActivityView(steps: line.steps)
+                        .padding(.bottom, line.text.isEmpty ? 0 : 18)
+                }
                 images
                 MarkdownView(source: line.text)
             }
@@ -318,5 +336,49 @@ struct MessageRow: View {
                 alignment: isUser ? .trailing : .leading
             )
         }
+    }
+}
+
+/// A line the instance wrote in the user's place, such as the results of a background task handed to the
+/// agent: a short label rather than a user message. A tap shows the full text.
+struct NoticeRow: View {
+    let label: String
+    let details: String
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                    Text(label)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isExpanded ? "Hides the details" : "Shows the details")
+
+            if isExpanded, !details.isEmpty {
+                MarkdownView(source: details)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 12)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(.quaternary)
+                            .frame(width: 2)
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

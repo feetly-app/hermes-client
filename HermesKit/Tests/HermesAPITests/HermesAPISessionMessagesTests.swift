@@ -58,6 +58,24 @@ extension HermesAPISessionsTests {
         #expect(!page.hasMore)
     }
 
+    @Test("display_content and the known display_metadata fields are decoded; an unknown shape is ignored")
+    func decodesDisplayFields() async throws {
+        let rows = [
+            #"{"id":1,"role":"user","content":"[wrapped]","display_content":"Hi","display_kind":"steer"}"#,
+            #"{"id":2,"role":"user","content":"[ASYNC]","display_kind":"async_delegation_complete","display_metadata":{"delegation_id":"d","task_count":2,"failed_count":0,"display_text":"Done"}}"#,
+            #"{"id":3,"role":"user","content":"x","display_metadata":"not an object"}"#,
+        ].joined(separator: ",")
+        SessionsURLProtocol.responder = { _ in
+            SessionsReply(body: Data(#"{"data":[\#(rows)],"pagination":{"returned":3}}"#.utf8))
+        }
+
+        let messages = try await makeClient().listSessionMessages(sessionID: "s").messages
+
+        #expect(messages.map(\.displayContent) == ["Hi", nil, nil])
+        #expect(messages[1].displayMetadata == DisplayMetadata(displayText: "Done", taskCount: 2, failedCount: 0))
+        #expect(messages[2].displayMetadata == nil)
+    }
+
     @Test("a full page reports hasMore, so the next page can be asked for")
     func fullPageHasMore() async throws {
         let rows = (1...2).map { #"{"id":\#($0),"role":"user","content":"m\#($0)"}"# }.joined(separator: ",")

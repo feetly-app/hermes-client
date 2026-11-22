@@ -78,6 +78,27 @@ struct SessionEventParserTests {
         #expect(SessionChatEvent(SessionEventFrame(name: "run.failed", data: "{}")) == .failed("The agent failed to reply."))
         #expect(SessionChatEvent(SessionEventFrame(name: "done", data: "{}")) == .finished)
         #expect(SessionChatEvent(SessionEventFrame(name: "tool.started", data: "{}")) == nil)
+        #expect(SessionChatEvent(SessionEventFrame(name: "run.started", data: "{}")) == nil)
+    }
+
+    @Test("tool and reasoning events carry the tool name, its preview and its arguments")
+    func decodesToolEvents() {
+        let started = SessionEventFrame(
+            name: "tool.started", data: #"{"tool_name":"terminal","preview":"ls -la","args":{"command":"ls -la"}}"#
+        )
+        #expect(
+            SessionChatEvent(started)
+                == .toolStarted(name: "terminal", preview: "ls -la", arguments: #"{"command":"ls -la"}"#)
+        )
+        let completed = SessionEventFrame(name: "tool.completed", data: #"{"tool_name":"terminal","preview":"ok"}"#)
+        #expect(SessionChatEvent(completed) == .toolFinished(name: "terminal", preview: "ok", failed: false))
+        let failed = SessionEventFrame(name: "tool.failed", data: #"{"tool_name":"terminal","preview":null}"#)
+        #expect(SessionChatEvent(failed) == .toolFinished(name: "terminal", preview: nil, failed: true))
+        let thinking = SessionEventFrame(name: "tool.progress", data: #"{"tool_name":"_thinking","delta":"Hmm"}"#)
+        #expect(SessionChatEvent(thinking) == .thinking("Hmm"))
+        // Progress of a real tool is not shown.
+        let progress = SessionEventFrame(name: "tool.progress", data: #"{"tool_name":"terminal","delta":"…"}"#)
+        #expect(SessionChatEvent(progress) == nil)
     }
 }
 
@@ -115,7 +136,9 @@ extension HermesAPISessionsTests {
             events.append(event)
         }
 
-        #expect(events == [.delta("Hel"), .delta("lo"), .completed("Hello")])
+        #expect(
+            events == [.delta("Hel"), .delta("lo"), .toolStarted(name: "search", preview: nil, arguments: nil), .completed("Hello")]
+        )
     }
 
     @Test("a session id with a slash is rejected before any request is sent")
@@ -151,8 +174,8 @@ extension HermesAPISessionsTests {
         #expect(parts.map { $0["type"] as? String } == ["text", "image_url"])
     }
 
-    @Test("an event the transcript does not show, such as tool progress, does not end or break the stream")
-    func toolEventsAreSkipped() async throws {
+    @Test("tool events are yielded and progress of a tool is skipped without breaking the stream")
+    func toolEventsAreYielded() async throws {
         let stream = """
         event: tool.started
         data: {"tool_name":"terminal","preview":"ls"}
@@ -175,6 +198,6 @@ extension HermesAPISessionsTests {
             events.append(event)
         }
 
-        #expect(events == [.delta("Done")])
+        #expect(events == [.toolStarted(name: "terminal", preview: "ls", arguments: nil), .delta("Done")])
     }
 }

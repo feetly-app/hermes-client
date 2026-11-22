@@ -8,6 +8,13 @@ public enum SessionChatEvent: Sendable, Equatable {
     case completed(String)
     /// The turn failed, with a message for the user (`error`, `run.failed`).
     case failed(String)
+    /// A tool started running (`tool.started`): its name, a short preview the instance wrote, and its
+    /// arguments as a JSON object string when the instance sent them.
+    case toolStarted(name: String, preview: String?, arguments: String?)
+    /// A tool finished (`tool.completed`), or failed (`tool.failed`), with a preview of its result.
+    case toolFinished(name: String, preview: String?, failed: Bool)
+    /// A piece of the model's reasoning (`tool.progress` on the `_thinking` pseudo tool).
+    case thinking(String)
     /// The end of the turn (`done`), or the end of the response.
     case finished
 }
@@ -109,15 +116,37 @@ extension SessionChatEvent {
             self = .failed(Self.field("message", in: frame.data) ?? "The agent failed to reply.")
         case "run.failed":
             self = .failed(Self.field("error", in: frame.data) ?? "The agent failed to reply.")
+        case "tool.started":
+            guard let object = Self.object(frame.data), let name = object["tool_name"] as? String else { return nil }
+            let arguments = (object["args"] as? [String: Any]).flatMap { args in
+                (try? JSONSerialization.data(withJSONObject: args, options: [.sortedKeys, .withoutEscapingSlashes]))
+                    .map { String(decoding: $0, as: UTF8.self) }
+            }
+            self = .toolStarted(name: name, preview: Self.text(object["preview"]), arguments: arguments)
+        case "tool.completed", "tool.failed":
+            guard let object = Self.object(frame.data), let name = object["tool_name"] as? String else { return nil }
+            self = .toolFinished(name: name, preview: Self.text(object["preview"]), failed: frame.name == "tool.failed")
+        case "tool.progress":
+            guard let object = Self.object(frame.data), object["tool_name"] as? String == "_thinking",
+                  let delta = object["delta"] as? String, !delta.isEmpty
+            else { return nil }
+            self = .thinking(delta)
         default:
             return nil
         }
     }
 
     private static func field(_ key: String, in json: String) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
-            return nil
-        }
-        return object[key] as? String
+        object(json)?[key] as? String
+    }
+
+    private static func object(_ json: String) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+    }
+
+    /// A non-empty string value, or `nil`.
+    private static func text(_ value: Any?) -> String? {
+        guard let text = value as? String, !text.isEmpty else { return nil }
+        return text
     }
 }
