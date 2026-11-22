@@ -49,6 +49,7 @@ struct ChatView: View {
                 }
                 .scrollTargetLayout()
                 .padding()
+                .readableWidth()
 
                 ScrollBottomMarker(visibleEnd: composerTop, isAtBottom: $isAtBottom) {
                     scrollToEnd(animation: .smooth(duration: 0.25))
@@ -173,6 +174,7 @@ private extension ChatView {
                 onStop: { transcript.stop() }
             )
         }
+        .readableWidth()
         .reportsTop($composerTop)
         .scrollToBottomButton(isVisible: !isAtBottom) {
             endRetries = 2
@@ -290,6 +292,21 @@ private extension ChatView {
             .padding()
         }
     }
+}
+
+extension View {
+    /// Keeps the transcript and the composer in a centered column no wider than `ChatLayout.readableWidth`,
+    /// as the Claude app does: on a wide Mac window or an iPad, lines stay short enough to read. Narrower
+    /// screens, such as an iPhone, are not affected.
+    func readableWidth() -> some View {
+        frame(maxWidth: ChatLayout.readableWidth)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+enum ChatLayout {
+    /// Widest the conversation column gets, its side padding included.
+    static let readableWidth: CGFloat = 760
 }
 
 /// One message of a conversation. A reply is laid out straight on the page, full width, without a
