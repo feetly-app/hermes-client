@@ -89,4 +89,25 @@ struct TranscriptNoticeTests {
 
         #expect(RemoteTranscript.lines(from: [message]).map(\.text) == ["Here is the JSON"])
     }
+
+    @Test("without display_content, a steer row shows the words between the markers, as the instance stores it")
+    func steerWithoutDisplayContent() {
+        // Shape returned by GET /api/sessions/{id}/messages: no display_content.
+        let stored = SessionMessage(
+            id: "5937", role: "user",
+            content: """
+                [OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once at this position; \
+                not tool output and not a new delivery when replayed from conversation history]
+                VOila le body JSON:
+                [/OUT-OF-BAND USER MESSAGE]
+                """,
+            displayKind: "steer"
+        )
+        let unknown = SessionMessage(id: "2", role: "user", content: "[OUT-OF-BAND USER MESSAGE] no close", displayKind: "steer")
+        let quoted = SessionMessage(id: "3", role: "user", content: stored.content)
+
+        #expect(RemoteTranscript.lines(from: [stored, unknown, quoted]).map(\.text) == [
+            "VOila le body JSON:", "[OUT-OF-BAND USER MESSAGE] no close", stored.content,
+        ])
+    }
 }

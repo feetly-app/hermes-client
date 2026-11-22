@@ -151,7 +151,7 @@ public final class RemoteTranscript: Identifiable {
                     notice: notice
                 )
             }
-            let content = message.displayContent ?? message.content ?? ""
+            let content = message.displayContent ?? steerText(of: message) ?? message.content ?? ""
             let (text, references) = StoredImageMarkers.parse(content)
             let images = references.compactMap { reference in
                 reference.sha256.flatMap { imageStore?.image(sha256: $0) }
@@ -166,6 +166,22 @@ public final class RemoteTranscript: Identifiable {
                 missingImageCount: references.count - images.count
             )
         }
+    }
+
+    /// The user's words in a message sent while a reply was running (`display_kind` `steer`), or `nil`.
+    ///
+    /// The instance stores such a message wrapped in a notice for the model and does not send the plain text
+    /// with it: the words sit between the end of the opening `[OUT-OF-BAND USER MESSAGE …]` line and the
+    /// closing `[/OUT-OF-BAND USER MESSAGE]`, as the instance itself reads them back.
+    static func steerText(of message: SessionMessage) -> String? {
+        guard message.role == "user", message.displayKind == "steer", let content = message.content,
+              let open = content.range(of: "[OUT-OF-BAND USER MESSAGE"),
+              let lineEnd = content[open.upperBound...].firstIndex(of: "\n"),
+              let close = content.range(of: "[/OUT-OF-BAND USER MESSAGE]", range: lineEnd..<content.endIndex)
+        else { return nil }
+        let text = content[content.index(after: lineEnd)..<close.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     /// The label of a user row the instance wrote itself, or `nil` for a message the user wrote.
