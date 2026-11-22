@@ -1,7 +1,7 @@
 import HermesChat
 import SwiftUI
 
-/// Connection settings: instance URL, model and API key. Shown alone on first launch, and as a sheet from
+/// Connection settings: instance URL, optional sidecar, model and API key. Shown alone on first launch, and as a sheet from
 /// the conversation list, where `canCancel` adds a Cancel button.
 struct SettingsView: View {
     let appState: AppState
@@ -11,10 +11,11 @@ struct SettingsView: View {
     @State private var baseURL: String
     @State private var model: String
     @State private var provider: String
+    @State private var sidecarURL: String
     @State private var apiKey: String
     @State private var errorMessage: String?
     @State private var isTesting = false
-    @State private var testOutcome: ConnectionTestOutcome?
+    @State private var testReport: ConnectionTestReport?
 
     init(appState: AppState, canCancel: Bool = false) {
         self.appState = appState
@@ -22,6 +23,7 @@ struct SettingsView: View {
         _baseURL = State(initialValue: appState.settings?.baseURLString ?? "")
         _model = State(initialValue: appState.settings?.model ?? ModelChoice.instanceDefault.model)
         _provider = State(initialValue: appState.settings?.provider ?? "")
+        _sidecarURL = State(initialValue: appState.settings?.sidecarURLString ?? "")
         _apiKey = State(initialValue: appState.apiKey ?? "")
     }
 
@@ -36,6 +38,16 @@ struct SettingsView: View {
                     Text("Instance")
                 } footer: {
                     Text("The base URL of your Hermes instance.")
+                }
+
+                Section {
+                    TextField("/sidecar (optional)", text: $sidecarURL)
+                        .urlEntry()
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Sidecar")
+                } footer: {
+                    Text("Optional. Where hermes-sidecar is served: a path on the instance URL (for example /sidecar) or a full URL. It uses the same API key. Leave empty if you don't run it.")
                 }
 
                 Section {
@@ -67,11 +79,16 @@ struct SettingsView: View {
                     if isTesting {
                         ProgressView()
                     }
-                    if let testOutcome, let message = testOutcome.message {
-                        Text(message).foregroundStyle(testOutcome == .succeeded ? .green : .red)
+                    if let testReport {
+                        if let message = testReport.hermesMessage {
+                            TestResultLabel(message: message, succeeded: testReport.hermes.isSuccess)
+                        }
+                        if let message = testReport.sidecarMessage {
+                            TestResultLabel(message: message, succeeded: testReport.sidecar?.isSuccess == true)
+                        }
                     }
                 } footer: {
-                    Text("Checks the URL and key typed above. Nothing is saved.")
+                    Text("Checks Hermes with the URL and key typed above, and the sidecar when one is filled in. Nothing is saved.")
                 }
 
                 if let errorMessage {
@@ -104,25 +121,31 @@ struct SettingsView: View {
     /// Runs the check with the values on screen, which may not be saved yet.
     private func testConnection() {
         isTesting = true
-        testOutcome = nil
+        testReport = nil
         Task {
-            let outcome = await ConnectionTester.run(baseURLString: baseURL, apiKey: apiKey)
+            let report = await ConnectionTester.run(
+                baseURLString: baseURL, apiKey: apiKey, sidecarURLString: sidecarURL)
             isTesting = false
-            if outcome != .cancelled {
-                testOutcome = outcome
+            if !report.isCancelled {
+                testReport = report
             }
         }
     }
 
     private func save() {
         let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSidecar = sidecarURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let settings = ConnectionSettings(
             baseURLString: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
             model: model.trimmingCharacters(in: .whitespacesAndNewlines),
-            provider: trimmedProvider.isEmpty ? nil : trimmedProvider
+            provider: trimmedProvider.isEmpty ? nil : trimmedProvider,
+            sidecarURLString: trimmedSidecar.isEmpty ? nil : trimmedSidecar
         )
         guard settings.isValid else {
-            errorMessage = "Enter an http or https URL and a model name."
+            errorMessage = settings.hasSidecar && settings.sidecarURL == nil
+                && ConnectionSettings.parseBaseURL(settings.baseURLString) != nil
+                ? "Enter the sidecar as a path (for example /sidecar) or an http or https URL, or leave it empty."
+                : "Enter an http or https URL and a model name."
             return
         }
         do {
@@ -134,6 +157,17 @@ struct SettingsView: View {
         } catch {
             errorMessage = "The API key could not be saved on this device."
         }
+    }
+}
+
+/// One line of the connection test: a green check when the service answered, a red cross otherwise.
+private struct TestResultLabel: View {
+    let message: String
+    let succeeded: Bool
+
+    var body: some View {
+        Label(message, systemImage: succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+            .foregroundStyle(succeeded ? .green : .red)
     }
 }
 

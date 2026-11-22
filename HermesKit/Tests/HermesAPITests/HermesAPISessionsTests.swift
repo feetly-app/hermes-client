@@ -367,4 +367,18 @@ struct HermesAPISessionsTests {
         }
         #expect(SessionsURLProtocol.requests.count == 1)
     }
+
+    @Test("the connection check is an authenticated GET of one session, and a rejected key fails")
+    func connectionCheck() async throws {
+        SessionsURLProtocol.responder = { _ in SessionsReply(body: try! fixtureData()) }
+
+        try await makeClient().checkConnection()
+
+        let request = try #require(SessionsURLProtocol.requests.first)
+        #expect(request.url?.absoluteString == "https://hermes.example.test/api/sessions?limit=1&offset=0")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key-123")
+
+        SessionsURLProtocol.responder = { _ in SessionsReply(status: 401) }
+        await #expect(throws: HermesAPIError.unauthorized) { try await makeClient().checkConnection() }
+    }
 }

@@ -8,15 +8,42 @@ import Testing
 struct ConnectionTesterTests {
     @Test("a base URL that is not http or https is refused before any request")
     func invalidURL() async {
-        #expect(await ConnectionTester.run(baseURLString: "ftp://hermes.example.test", apiKey: "key") == .invalidURL)
-        #expect(await ConnectionTester.run(baseURLString: "hermes.example.test", apiKey: "key") == .invalidURL)
-        #expect(await ConnectionTester.run(baseURLString: "", apiKey: "key") == .invalidURL)
+        #expect(await ConnectionTester.run(baseURLString: "ftp://hermes.example.test", apiKey: "key").hermes == .invalidURL)
+        #expect(await ConnectionTester.run(baseURLString: "hermes.example.test", apiKey: "key").hermes == .invalidURL)
+        #expect(await ConnectionTester.run(baseURLString: "", apiKey: "key") == ConnectionTestReport(hermes: .invalidURL))
     }
 
-    @Test("an empty or blank API key is refused before any request")
+    @Test("an empty or blank API key is refused before any request, sidecar included")
     func missingKey() async {
-        let outcome = await ConnectionTester.run(baseURLString: "https://hermes.example.test", apiKey: "   ")
-        #expect(outcome == .missingKey)
+        let report = await ConnectionTester.run(
+            baseURLString: "https://hermes.example.test", apiKey: "   ", sidecarURLString: "/sidecar")
+        #expect(report == ConnectionTestReport(hermes: .missingKey))
+    }
+
+    @Test("a blank sidecar is not checked; one that does not resolve is reported without a request")
+    func sidecarNotChecked() async {
+        let none = await ConnectionTester.run(baseURLString: "nope", apiKey: "key", sidecarURLString: "  ")
+        #expect(none.sidecar == nil)
+        #expect(none.sidecarMessage == nil)
+
+        let invalid = await ConnectionTester.run(baseURLString: "nope", apiKey: "key", sidecarURLString: "/sidecar")
+        #expect(invalid == ConnectionTestReport(hermes: .invalidURL, sidecar: .invalidURL))
+        #expect(invalid.sidecarMessage?.hasPrefix("Sidecar:") == true)
+    }
+
+    @Test("each service gets its own line, green on success, and a cancelled check shows nothing")
+    func reportMessages() {
+        let ok = ConnectionTestReport(hermes: .succeeded, sidecar: .succeeded(detail: "v0.1.0"))
+        #expect(ok.hermesMessage == "Hermes: OK")
+        #expect(ok.sidecarMessage == "Sidecar: OK (v0.1.0)")
+        #expect(ok.hermes.isSuccess && ok.sidecar?.isSuccess == true)
+
+        let down = ConnectionTestReport(hermes: .succeeded, sidecar: .failed(.http(status: 502)))
+        #expect(down.sidecarMessage?.contains("cannot reach Hermes") == true)
+        #expect(down.sidecar?.isSuccess == false)
+
+        #expect(ConnectionTestReport(hermes: .succeeded, sidecar: .cancelled).isCancelled)
+        #expect(!ok.isCancelled)
     }
 
     @Test("typed API errors are kept as failures with their message")
