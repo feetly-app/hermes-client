@@ -8,10 +8,14 @@ import SwiftUI
 /// Layout mirrors ChatGPT: single-row (HStack) when the draft fits on one line, then animates to a
 /// stacked layout (text full-width on top, button row below) as the user types.
 ///
-/// A hidden measurement TextField — always spanning the full card width, never sharing a row with
-/// buttons — drives the transition. Its height is compared against the single-line baseline captured
-/// on first appear, so the threshold automatically adapts to any screen width, font size or Dynamic
-/// Type setting with no hardcoded character count and no feedback loop.
+/// A hidden measurement TextField — always constrained to the compact text-field width (the width
+/// it has when squeezed between buttons) — drives the transition. Its height compared against the
+/// single-line baseline is the sole criterion for expand and collapse: no hardcoded character
+/// count, no dependency on screen size, works at any Dynamic Type setting.
+///
+/// Using compact width for both expand and collapse avoids the feedback loop that would occur if
+/// collapse used the wider full-width height: switching to expanded gives the text field more
+/// horizontal space → height shrinks → collapse → compact shrinks space → text wraps → expand → …
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -34,6 +38,10 @@ struct ChatComposer: View {
     /// Height of the measurement probe at exactly one line of text. Captured once on first appear;
     /// expansion triggers when the probe exceeds this by more than 2 pt.
     @State private var singleLineHeight: CGFloat = 0
+    /// Actual width of the text field while in compact layout (squeezed between the buttons).
+    /// Captured at runtime via onGeometryChange; the hidden measurement probe is constrained to
+    /// this width so both expand and collapse use the same reference — no feedback loop.
+    @State private var compactTextWidth: CGFloat = 0
 
     /// Diameter of the round action buttons.
     @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
@@ -86,35 +94,33 @@ struct ChatComposer: View {
 
     // MARK: - Measurement probe
 
-    /// A hidden, non-interactive copy of the text field that always spans the full card width.
+    /// A hidden, non-interactive copy of the text field constrained to `compactTextWidth`.
     ///
-    /// `onAppear` captures its height while the draft is empty → that is the single-line baseline.
-    /// `onChange` fires whenever the draft grows and the probe wraps to more lines. Because the
-    /// probe width never changes (no buttons share its row), the comparison is stable and there is
-    /// no feedback loop between layout mode and wrap detection.
+    /// Because its width never changes (it is not affected by which layout mode is active),
+    /// its height is a stable signal for both expand and collapse:
+    /// - `height > singleLineHeight + 2`  → text would wrap in compact mode → expand
+    /// - `height ≤ singleLineHeight + 2`  → text fits on one line in compact mode → collapse
+    ///
+    /// `singleLineHeight` is set on first appear (draft is empty → one line).
     private var measurementProbe: some View {
         TextField("", text: $draft, axis: .vertical)
             .lineLimit(1 ... 6)
             .textFieldStyle(.plain)
             .padding(.vertical, 7)
-            .hidden()
+            // Constrain to compact width once it is known; fall back to full width on the first
+            // layout pass (before compactTextWidth is captured) — acceptable because the
+            // single-line height is font-size-dependent, not width-dependent.
+            .frame(width: compactTextWidth > 0 ? compactTextWidth : nil, alignment: .leading)
+            .opacity(0)
             .allowsHitTesting(false)
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear {
-                            // Draft is empty on first appear → geo.size.height is the single-line baseline.
-                            if singleLineHeight == 0 {
-                                singleLineHeight = geo.size.height
-                            }
-                        }
-                        .onChange(of: geo.size.height) { _, newHeight in
-                            guard singleLineHeight > 0 else { return }
-                            // 2 pt buffer avoids triggering on sub-pixel rounding differences.
-                            isExpanded = newHeight > singleLineHeight + 2
-                        }
+            .accessibilityHidden(true)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { newHeight in
+                if singleLineHeight == 0 {
+                    singleLineHeight = newHeight
                 }
-            )
+                guard singleLineHeight > 0 else { return }
+                isExpanded = newHeight > singleLineHeight + 2
+            }
     }
 
     // MARK: - Sub-views
@@ -125,6 +131,11 @@ struct ChatComposer: View {
             .textFieldStyle(.plain)
             .lineLimit(1 ... 6)
             .padding(.vertical, 7)
+            // Capture the compact width while in compact layout so the measurement probe can be
+            // constrained to the same reference width for both expand and collapse detection.
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
+                if !isExpanded, w > 0 { compactTextWidth = w }
+            }
     }
 
     @ViewBuilder private var addButton: some View {
