@@ -22,7 +22,7 @@ jobs:
     if: github.event.label.name == 'preview-ios' && github.event.pull_request.state == 'open'
     runs-on: xcode-27
     concurrency:
-      group: preview-ios-device-${{ github.event.pull_request.number }}
+      group: preview-ios-device-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
       cancel-in-progress: true
     timeout-minutes: 60
     env:
@@ -158,7 +158,7 @@ jobs:
     if: github.event.label.name == 'preview-ios' && github.event.pull_request.state == 'open'
     runs-on: xcode-27
     concurrency:
-      group: preview-ios-simulator-${{ github.event.pull_request.number }}
+      group: preview-ios-simulator-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
       cancel-in-progress: true
     timeout-minutes: 45
     env:

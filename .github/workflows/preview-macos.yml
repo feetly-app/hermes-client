@@ -22,7 +22,7 @@ jobs:
     if: github.event.label.name == 'preview-macos' && github.event.pull_request.state == 'open'
     runs-on: xcode-27
     concurrency:
-      group: preview-macos-app-${{ github.event.pull_request.number }}
+      group: preview-macos-app-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
       cancel-in-progress: true
     timeout-minutes: 45
     env:
