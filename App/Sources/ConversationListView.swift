@@ -29,6 +29,7 @@ struct ConversationListView: View {
             RemoteStatusRows(list: browser.remoteSessions)
                 .listRowSeparator(.hidden)
         }
+        .sobreListStyle()
         .task {
             await browser.reloadSessions()
         }
@@ -61,12 +62,18 @@ struct ConversationListView: View {
         }
     }
 
-    /// One line: the icon of the session kind and its title, truncated at the end.
+    /// One line: the icon of the session kind and its title, truncated at the end. The icon takes the color
+    /// of the text, not the accent color.
     private func row(_ session: RemoteSession) -> some View {
-        Label(session.displayTitle, systemImage: Self.icon(for: session.kind))
-            .lineLimit(1)
-            .tag(session.id)
-            .listRowSeparator(.hidden)
+        Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: Self.icon(for: session.kind))
+                .foregroundStyle(.primary)
+        }
+        .lineLimit(1)
+        .tag(session.id)
+        .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },
             onDelete: { deleting = session.id }
@@ -120,6 +127,19 @@ struct ConversationListView: View {
 
     private var isDeleting: Binding<Bool> {
         Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+    }
+}
+
+extension View {
+    /// A plain list on iOS, as in the Claude app: rows straight on the screen background, without the grouped
+    /// cards. macOS keeps its native sidebar.
+    @ViewBuilder
+    fileprivate func sobreListStyle() -> some View {
+        #if os(iOS)
+            listStyle(.plain)
+        #else
+            self
+        #endif
     }
 }
 
