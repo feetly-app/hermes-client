@@ -13,7 +13,8 @@ public enum ConversationTitle {
 /// The conversation list and the open conversation.
 ///
 /// Every conversation is a session stored on the Hermes instance: a new one is created there, and the
-/// instance keeps its messages, title and model. The app keeps no copy.
+/// instance keeps its messages, title and model. The app keeps no copy. New sessions run on the model set
+/// in the connection settings.
 ///
 /// A session created here and left before any message is sent is deleted from the instance, so an
 /// abandoned "New conversation" does not stay in the list.
@@ -30,8 +31,8 @@ public final class ConversationBrowser {
     /// `true` while a new session is being created on the instance.
     public private(set) var isCreating = false
 
-    private let model: String
-    private let lastModel: (any LastModelStorage)?
+    /// The model new sessions are locked on.
+    private let model: ModelChoice
     /// Sessions created here in which no message was sent yet.
     private var unsentSessionIDs: Set<String> = []
     /// Sessions left while a reply was streaming. The reply exists only in the transcript that sent the
@@ -39,45 +40,24 @@ public final class ConversationBrowser {
     /// again shows that transcript instead of a page read from the instance.
     private var liveTranscripts: [RemoteTranscript] = []
 
-    /// `model` is the instance default, used when no model was chosen yet.
-    public init(
-        remoteSessions: RemoteSessionList,
-        model: String = ModelChoice.instanceDefault.model,
-        lastModel: (any LastModelStorage)? = nil
-    ) {
+    /// `model` is the model new conversations run on, from the connection settings.
+    public init(remoteSessions: RemoteSessionList, model: ModelChoice = .instanceDefault) {
         self.remoteSessions = remoteSessions
         self.model = model
-        self.lastModel = lastModel
     }
 
-    /// The instance default model, the fallback of the new conversation screen.
-    public var defaultChoice: ModelChoice {
-        ModelChoice(model: model)
-    }
-
-    /// The model a new conversation starts on: the last one chosen, or the instance default.
-    public var preferredChoice: ModelChoice {
-        lastModel?.load() ?? defaultChoice
-    }
-
-    /// Creates a session on the instance and opens it. `chosen` is the model it runs on; `nil` or a
-    /// blank model takes `preferredChoice`. A model chosen here is remembered for the next conversation.
+    /// Creates a session on the instance, on the configured model, and opens it.
     ///
     /// The instance default model is not sent: the instance picks its configured model.
     @discardableResult
-    public func createConversation(model chosen: String? = nil, provider: String? = nil) async throws -> RemoteSession {
-        let explicit = chosen.flatMap { ModelChoice(model: $0, provider: provider).normalized }
-        let choice = explicit ?? preferredChoice
-        let lock = choice == ModelChoice.instanceDefault ? nil : choice
+    public func createConversation() async throws -> RemoteSession {
+        let lock = model == ModelChoice.instanceDefault ? nil : model
         isCreating = true
         defer { isCreating = false }
         let session = try await remoteSessions.create(model: lock)
-        if let explicit {
-            lastModel?.save(explicit)
-        }
         unsentSessionIDs.insert(session.id)
         closeOpened()
-        let transcript = remoteSessions.transcript(for: session, model: choice)
+        let transcript = remoteSessions.transcript(for: session, model: model)
         transcript.markEmpty()
         watch(transcript)
         openedRemote = transcript

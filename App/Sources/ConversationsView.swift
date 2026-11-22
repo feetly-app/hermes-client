@@ -3,14 +3,11 @@ import HermesChat
 import SwiftUI
 
 /// Chat tab: a split view with the conversation list and the open conversation.
-/// A new conversation is a session created on the instance, on the model chosen in `NewConversationView`.
+/// A new conversation is a session created on the instance, on the model set in the connection settings.
 /// On compact widths the split view collapses into a navigation stack.
 struct ConversationsView: View {
     let browser: ConversationBrowser
-    /// Lists the instance models for the new conversation screen. `nil` means the name is typed by hand.
-    let modelCatalog: (any ModelCatalog)?
 
-    @State private var isChoosingModel = false
     /// Why the last action on a conversation failed, shown in an alert.
     @State private var failure: String?
 
@@ -20,10 +17,8 @@ struct ConversationsView: View {
                 .navigationTitle("Conversations")
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("New conversation", systemImage: "square.and.pencil") {
-                            isChoosingModel = true
-                        }
-                        .disabled(browser.isCreating)
+                        Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
+                            .disabled(browser.isCreating)
                     }
                 }
         } detail: {
@@ -40,29 +35,12 @@ struct ConversationsView: View {
                     } description: {
                         Text("Pick a conversation in the list, or start a new one.")
                     } actions: {
-                        Button("New conversation") {
-                            isChoosingModel = true
-                        }
+                        Button("New conversation", action: startConversation)
                     }
                 }
             }
             // On iPhone an open conversation fills the screen: the tab bar comes back with the list.
             .hidesTabBarWhenCompact()
-        }
-        .sheet(isPresented: $isChoosingModel) {
-            NewConversationView(
-                catalog: modelCatalog,
-                preferred: browser.preferredChoice,
-                defaultChoice: browser.defaultChoice
-            ) { choice in
-                Task {
-                    do {
-                        try await browser.createConversation(model: choice.model, provider: choice.provider)
-                    } catch {
-                        failure = "The conversation could not be started. \(Self.reason(error))"
-                    }
-                }
-            }
         }
         .alert(
             "Something went wrong",
@@ -72,6 +50,16 @@ struct ConversationsView: View {
             Button("OK", role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+    }
+
+    private func startConversation() {
+        Task {
+            do {
+                try await browser.createConversation()
+            } catch {
+                failure = "The conversation could not be started. \(Self.reason(error))"
+            }
         }
     }
 

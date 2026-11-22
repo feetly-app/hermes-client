@@ -9,7 +9,7 @@ struct ContentView: View {
         if let browser = appState.browser {
             TabView {
                 Tab("Chat", systemImage: "bubble.left.and.bubble.right") {
-                    ConversationsView(browser: browser, modelCatalog: appState.modelCatalog)
+                    ConversationsView(browser: browser)
                 }
                 Tab("Settings", systemImage: "gearshape") {
                     SettingsView(appState: appState)

@@ -1,13 +1,14 @@
 import HermesChat
 import SwiftUI
 
-/// Connection settings: instance URL and API key. Shown on first launch and from the chat screen.
-/// The model is picked per conversation, in `NewConversationView`.
+/// Connection settings: instance URL, model and API key. Shown on first launch and from the chat screen.
 struct SettingsView: View {
     let appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var baseURL: String
+    @State private var model: String
+    @State private var provider: String
     @State private var apiKey: String
     @State private var errorMessage: String?
     @State private var isTesting = false
@@ -16,6 +17,8 @@ struct SettingsView: View {
     init(appState: AppState) {
         self.appState = appState
         _baseURL = State(initialValue: appState.settings?.baseURLString ?? "")
+        _model = State(initialValue: appState.settings?.model ?? ModelChoice.instanceDefault.model)
+        _provider = State(initialValue: appState.settings?.provider ?? "")
         _apiKey = State(initialValue: appState.apiKey ?? "")
     }
 
@@ -29,7 +32,20 @@ struct SettingsView: View {
                 } header: {
                     Text("Instance")
                 } footer: {
-                    Text("The base URL of your Hermes instance. The model is chosen for each new conversation.")
+                    Text("The base URL of your Hermes instance.")
+                }
+
+                Section {
+                    TextField("Model name", text: $model)
+                        .noAutocapitalization()
+                        .autocorrectionDisabled()
+                    TextField("Provider (optional)", text: $provider)
+                        .noAutocapitalization()
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Model")
+                } footer: {
+                    Text("Every new conversation runs on this model. Keep hermes-agent to use the instance's configured model; add a provider (for example anthropic) to use a provider model.")
                 }
 
                 Section {
@@ -74,6 +90,7 @@ struct SettingsView: View {
     private var canSave: Bool {
         !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Runs the check with the values on screen, which may not be saved yet.
@@ -90,11 +107,14 @@ struct SettingsView: View {
     }
 
     private func save() {
+        let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
         let settings = ConnectionSettings(
-            baseURLString: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            baseURLString: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            provider: trimmedProvider.isEmpty ? nil : trimmedProvider
         )
         guard settings.isValid else {
-            errorMessage = "Enter an http or https URL."
+            errorMessage = "Enter an http or https URL and a model name."
             return
         }
         do {
