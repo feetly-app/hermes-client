@@ -145,63 +145,36 @@ struct RemoteTranscriptTests {
         #expect(transcript.title == "Trip plans")
     }
 
-    @Test("image markers leave the text; images sent from here come back, the others are counted as missing")
-    func imageMarkers() throws {
-        let store = InMemorySentImageStore()
-        let photo = try #require(ImageAttachment(mimeType: "image/jpeg", data: Data("sent from here".utf8)))
-        store.save(photo)
-        let elsewhere = String(repeating: "b", count: 64)
+    @Test("image markers leave the text and become stored images, named by digest when the path has one")
+    func imageMarkers() {
+        let digest = String(repeating: "b", count: 64)
         let content = """
             Two photos
 
-            [Image attached at: /data/native-inputs/\(sha256Hex(photo.data))/api_x.jpg]
-            [Image attached at: /data/native-inputs/\(elsewhere)/api_y.jpg]
+            [Image attached at: /data/native-inputs/\(digest)/api_x.jpg]
+            [Image attached: https://hermes.example.test/y.png]
             [screenshot]
             [screenshot]
             """
 
-        let lines = RemoteTranscript.lines(
-            from: [
-                message("1", "user", content),
-                message("2", "user", "[Image attached at: /data/native-inputs/\(elsewhere)/api_y.jpg]\n[screenshot]"),
-            ],
-            imageStore: store
-        )
+        let lines = RemoteTranscript.lines(from: [
+            message("1", "user", content),
+            message("2", "user", "[Image attached at: /data/native-inputs/\(digest)/api_y.jpg]\n[screenshot]"),
+        ])
 
         #expect(lines.map(\.text) == ["Two photos", ""])
-        #expect(lines[0].images == [photo])
-        #expect(lines[0].missingImageCount == 1)
-        #expect(lines[1].images.isEmpty)
-        #expect(lines[1].missingImageCount == 1)
+        #expect(lines[0].images == [.stored(sha256: digest), .stored(sha256: nil)])
+        #expect(lines[1].images == [.stored(sha256: digest)])
+        #expect(!lines[1].isActivity)
     }
 
-    @Test("without an image store, every image a message names is missing")
-    func imageMarkersWithoutStore() {
-        let lines = RemoteTranscript.lines(from: [
-            message("1", "user", "Look\n\n[Image attached at: /data/native-inputs/\(String(repeating: "c", count: 64))/a.jpg]"),
-        ])
+    @Test("the transcript hands out the loader it was given, and none without a sidecar")
+    func storedImagesLoader() {
+        let source = FakeMessageSource(pages: [])
+        let loader = StoredImageLoader(fetcher: NoImages())
 
-        #expect(lines.first?.text == "Look")
-        #expect(lines.first?.missingImageCount == 1)
-    }
-
-    @Test("the transcript shows the images its store holds once loaded")
-    func loadResolvesImages() async throws {
-        let store = InMemorySentImageStore()
-        let photo = try #require(ImageAttachment(mimeType: "image/png", data: Data("pixels".utf8)))
-        store.save(photo)
-        let source = FakeMessageSource(pages: [
-            .success(SessionMessagesPage(
-                sessionID: "s1",
-                messages: [message("1", "user", "See\n\n[Image attached at: /n/\(sha256Hex(photo.data))/a.png]")],
-                hasMore: false
-            )),
-        ])
-        let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source, imageStore: store)
-
-        await transcript.load()
-
-        #expect(transcript.lines.first?.images == [photo])
+        #expect(RemoteTranscript(sessionID: "s1", title: nil, source: source, storedImages: loader).storedImages === loader)
+        #expect(RemoteTranscript(sessionID: "s1", title: nil, source: source).storedImages == nil)
     }
 
     @Test("load asks for the first page, newest messages, and keeps hasMore")
@@ -295,4 +268,8 @@ struct RemoteTranscriptTests {
         #expect(transcript.state == .loaded)
         #expect(transcript.lines.map(\.text) == ["Hi"])
     }
+}
+
+private struct NoImages: StoredImageFetching {
+    func image(sha256: String) async throws -> ImageAttachment? { nil }
 }

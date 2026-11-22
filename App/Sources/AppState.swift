@@ -1,3 +1,4 @@
+import Foundation
 import HermesAPI
 import HermesChat
 import HermesSecurity
@@ -21,6 +22,7 @@ final class AppState {
         self.settingsStorage = settingsStorage
         self.secrets = secrets
         settings = settingsStorage.load()
+        Self.removeLegacySentImages()
         rebuildBrowser()
     }
 
@@ -47,8 +49,23 @@ final class AppState {
         }
         let client = HermesClient(configuration: HermesClientConfiguration(baseURL: baseURL, apiKey: key))
         browser = ConversationBrowser(
-            remoteSessions: RemoteSessionList(source: client, imageStore: DirectorySentImageStore.inCaches()),
+            remoteSessions: RemoteSessionList(source: client, storedImages: Self.storedImages(settings, apiKey: key)),
             model: settings.modelChoice
         )
+    }
+
+    /// Loads the images stored messages name through the sidecar, or `nil` when none is configured: the
+    /// instance does not send them back, so they then show as not available.
+    private static func storedImages(_ settings: ConnectionSettings, apiKey: String) -> StoredImageLoader? {
+        guard let sidecarURL = settings.sidecarURL else { return nil }
+        let sidecar = SidecarClient(configuration: HermesClientConfiguration(baseURL: sidecarURL, apiKey: apiKey))
+        return StoredImageLoader(fetcher: sidecar, cache: StoredImageCache.inCaches())
+    }
+
+    /// Deletes the copies of sent images that earlier versions kept in `Caches/Sent Images`: the sidecar
+    /// now serves every stored image.
+    static func removeLegacySentImages() {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        try? FileManager.default.removeItem(at: caches.appendingPathComponent("Sent Images", isDirectory: true))
     }
 }

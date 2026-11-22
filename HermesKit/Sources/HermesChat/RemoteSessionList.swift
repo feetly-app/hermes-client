@@ -48,15 +48,15 @@ public final class RemoteSessionList {
     public private(set) var hasMore = false
 
     private let source: any SessionListing
-    private let imageStore: (any SentImageStore)?
+    private let storedImages: StoredImageLoader?
     /// Number of unpinned rows received so far, which is the offset of the next page.
     private var windowOffset = 0
 
-    /// `imageStore` holds the images sent from this device: transcripts show them in place of the markers
-    /// the instance stores.
-    public init(source: any SessionListing, imageStore: (any SentImageStore)? = nil) {
+    /// `storedImages` gets back the images stored messages name, through the sidecar. `nil` without one:
+    /// transcripts then show those images as not available.
+    public init(source: any SessionListing, storedImages: StoredImageLoader? = nil) {
         self.source = source
-        self.imageStore = imageStore
+        self.storedImages = storedImages
     }
 
     public var isLoading: Bool {
@@ -150,7 +150,7 @@ public final class RemoteSessionList {
             model: model ?? session.model.map { ModelChoice(model: $0) },
             source: source,
             acceptsMessages: session.acceptsAPIMessages,
-            imageStore: imageStore
+            storedImages: storedImages
         )
         transcript.onFork = { [weak self] fork in
             self?.replace(session.id, with: fork)

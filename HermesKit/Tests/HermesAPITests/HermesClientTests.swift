@@ -16,6 +16,7 @@ struct MockReply: Sendable {
     var failure: URLError?
     /// The final URL of the response, when it differs from the request URL (for example after a redirect).
     var responseURL: URL?
+    var headers: [String: String]?
 }
 
 /// Intercepts the requests of the test session. Global state: the suite is `.serialized`.
@@ -46,7 +47,7 @@ final class MockURLProtocol: URLProtocol {
         }
         guard let url = request.url,
             let response = HTTPURLResponse(
-                url: reply.responseURL ?? url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: nil)
+                url: reply.responseURL ?? url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers)
         else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
@@ -368,5 +369,56 @@ extension HermesClientTests {
 
         MockURLProtocol.responder = { _ in MockReply(chunks: [Data("<html>Log in</html>".utf8)]) }
         await #expect(throws: HermesAPIError.invalidResponse) { try await makeSidecar().status() }
+    }
+
+    @Test("a sidecar image is an authenticated GET to {sidecar}/media/{sha256} with its content type")
+    func sidecarMedia() async throws {
+        let digest = String(repeating: "A", count: 64)
+        MockURLProtocol.responder = { _ in
+            MockReply(chunks: [Data([0x89, 0x50])], headers: ["Content-Type": "image/png"])
+        }
+
+        let image = try await makeSidecar().media(sha256: digest)
+
+        #expect(image == ImageAttachment(mimeType: "image/png", data: Data([0x89, 0x50])))
+        let request = try #require(MockURLProtocol.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(
+            request.url?.absoluteString
+                == "https://hermes.example.test/sidecar/media/\(String(repeating: "a", count: 64))")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key-123")
+    }
+
+    @Test("a gone image (404), a sidecar without media (503) and an invalid digest give nil")
+    func sidecarMediaUnavailable() async throws {
+        let digest = String(repeating: "b", count: 64)
+        for status in [400, 404, 503] {
+            MockURLProtocol.responder = { _ in MockReply(status: status) }
+            #expect(try await makeSidecar().media(sha256: digest) == nil)
+        }
+
+        MockURLProtocol.reset()
+        #expect(try await makeSidecar().media(sha256: "../status") == nil)
+        #expect(MockURLProtocol.requests.isEmpty)
+    }
+
+    @Test("a rejected key, a server error, a redirect and a body that is not an image are failures")
+    func sidecarMediaFailures() async throws {
+        let digest = String(repeating: "c", count: 64)
+        MockURLProtocol.responder = { _ in MockReply(status: 401) }
+        await #expect(throws: HermesAPIError.unauthorized) { try await makeSidecar().media(sha256: digest) }
+
+        MockURLProtocol.responder = { _ in MockReply(status: 500) }
+        await #expect(throws: HermesAPIError.http(status: 500)) { try await makeSidecar().media(sha256: digest) }
+
+        MockURLProtocol.responder = { _ in
+            MockReply(status: 404, responseURL: URL(string: "https://hermes.example.test/login"))
+        }
+        await #expect(throws: HermesAPIError.invalidResponse) { try await makeSidecar().media(sha256: digest) }
+
+        MockURLProtocol.responder = { _ in
+            MockReply(chunks: [Data("<html>Log in</html>".utf8)], headers: ["Content-Type": "text/html"])
+        }
+        await #expect(throws: HermesAPIError.invalidResponse) { try await makeSidecar().media(sha256: digest) }
     }
 }

@@ -43,7 +43,7 @@ struct ChatView: View {
                         if let notice = line.notice {
                             NoticeRow(label: notice, details: line.text)
                         } else {
-                            MessageRow(line: line)
+                            MessageRow(line: line, storedImages: transcript.storedImages)
                         }
                     }
                 }
@@ -313,6 +313,8 @@ enum ChatLayout {
 /// background; a message from the user sits in a rounded bubble on the right, with its images above it.
 struct MessageRow: View {
     let line: TranscriptLine
+    /// Loads the images a stored message names, `nil` without a sidecar.
+    var storedImages: StoredImageLoader?
 
     private var isUser: Bool { line.role == "user" }
 
@@ -359,10 +361,10 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var images: some View {
-        if !line.images.isEmpty || line.missingImageCount > 0 {
+        if !line.images.isEmpty {
             MessageImages(
                 images: line.images,
-                missingCount: line.missingImageCount,
+                loader: storedImages,
                 alignment: isUser ? .trailing : .leading
             )
         }
