@@ -327,3 +327,46 @@ struct HermesClientTests {
         #expect(result == .fallback(.invalidResponse))
     }
 }
+
+// Sidecar tests share `MockURLProtocol`, so they run in this serialized suite.
+extension HermesClientTests {
+    private func makeSidecar(_ base: String = "https://hermes.example.test/sidecar") -> SidecarClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return SidecarClient(
+            configuration: HermesClientConfiguration(baseURL: URL(string: base) ?? baseURL, apiKey: apiKey),
+            session: URLSession(configuration: config)
+        )
+    }
+
+    private static let sidecarOK = Data(
+        #"{"sidecar":{"status":"ok","version":"0.1.0"},"hermes":{"reachable":true,"health":{"status":"ok"}}}"#.utf8)
+
+    @Test("the sidecar status is an authenticated GET to {sidecar}/status that returns the version")
+    func sidecarStatusRequest() async throws {
+        MockURLProtocol.responder = { _ in MockReply(chunks: [Self.sidecarOK]) }
+
+        let status = try await makeSidecar().status()
+
+        #expect(status == SidecarStatus(version: "0.1.0"))
+        let request = try #require(MockURLProtocol.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://hermes.example.test/sidecar/status")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key-123")
+    }
+
+    @Test("a rejected key, Hermes down (502) and a body without status ok are sidecar failures")
+    func sidecarStatusFailures() async throws {
+        MockURLProtocol.responder = { _ in MockReply(status: 401) }
+        await #expect(throws: HermesAPIError.unauthorized) { try await makeSidecar().status() }
+
+        MockURLProtocol.responder = { _ in MockReply(status: 502) }
+        await #expect(throws: HermesAPIError.http(status: 502)) { try await makeSidecar().status() }
+
+        MockURLProtocol.responder = { _ in MockReply(chunks: [Data(#"{"status":"ok"}"#.utf8)]) }
+        await #expect(throws: HermesAPIError.invalidResponse) { try await makeSidecar().status() }
+
+        MockURLProtocol.responder = { _ in MockReply(chunks: [Data("<html>Log in</html>".utf8)]) }
+        await #expect(throws: HermesAPIError.invalidResponse) { try await makeSidecar().status() }
+    }
+}

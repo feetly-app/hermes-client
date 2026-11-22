@@ -39,6 +39,9 @@ public struct HermesClient: Sendable {
         self.session = session
     }
 
+    /// The URL session, for `SidecarClient`, which reuses this client's request building.
+    var sessionForSidecar: URLSession { session }
+
     /// Sends one message to a session stored on the instance and streams the reply events, in order.
     /// `images` go with the text as `image_url` parts (see `MessageContent`).
     ///
@@ -119,7 +122,16 @@ public struct HermesClient: Sendable {
         return false
     }
 
-    /// Checks that the instance answers at `HermesAPIPaths.health`.
+    /// Checks the URL and the key with the lightest authenticated request: one session from
+    /// `GET {baseURL}/api/sessions?limit=1`. Unlike `healthCheck()`, a wrong key fails (`unauthorized`), and
+    /// it proves the endpoint the app relies on answers. Throws `HermesAPIError`; cancellation throws
+    /// `CancellationError`.
+    public func checkConnection() async throws {
+        _ = try await listSessions(limit: 1)
+    }
+
+    /// Checks that the instance answers at `HermesAPIPaths.health`. Hermes answers it without checking the key:
+    /// use `checkConnection()` to check the key too.
     ///
     /// Succeeds only for a 2xx response that was not redirected and has a JSON object body. A redirect
     /// (for example an access gate sending the request to `/login`) and a non-JSON body are errors.
@@ -356,7 +368,7 @@ public struct HermesClient: Sendable {
     }
 
     /// Builds an authenticated request to `{baseURL}{path}`, with the Bearer header and the client timeout.
-    private func makeRequest(
+    func makeRequest(
         method: String, path: String, accept: String, query: [URLQueryItem] = []
     ) -> URLRequest {
         let relativePath = String(path.drop(while: { $0 == "/" }))
@@ -378,7 +390,7 @@ public struct HermesClient: Sendable {
 
     /// Rejects non-2xx statuses, and any response whose final URL differs from the request URL
     /// (a redirect, for example to an access gate's `/login` page), so that it never counts as a success.
-    private static func validate(_ response: URLResponse, requestURL: URL?) throws {
+    static func validate(_ response: URLResponse, requestURL: URL?) throws {
         guard let http = response as? HTTPURLResponse else {
             throw HermesAPIError.invalidResponse
         }
