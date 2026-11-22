@@ -8,16 +8,18 @@ import SwiftUI
 /// Layout mirrors ChatGPT: single-row when the draft fits on one line, then animates to a stacked
 /// layout (text full-width on top, button row below) as the user types.
 ///
-/// **Keyboard preservation**: the TextField sits at a fixed structural position inside a VStack
-/// that is always present in the layout. The action buttons slide in and out (their frame width
-/// animates to/from zero) around it rather than the whole branch being replaced, so SwiftUI never
-/// removes and re-creates the TextField across the transition and the keyboard stays up.
+/// **Keyboard preservation**: a custom `ComposerInputLayout` holds the add button, the text field,
+/// and the send/stop button as three always-present subviews. The layout repositions them between
+/// compact and expanded without ever removing or re-adding any view, so SwiftUI never drops focus
+/// and the keyboard stays up during the transition.
 ///
-/// **Expansion detection**: a hidden measurement TextField constrained to the compact width
-/// (captured once from the real field's onGeometryChange while !isExpanded) drives `isExpanded`
-/// via its height. Using the same compact width for both expand and collapse avoids the feedback
-/// loop that occurs if collapse uses the wider full-width height: expanded → text field wider →
-/// height shrinks → collapse → narrower → text wraps → expand → …
+/// **Button stability**: in both modes the buttons are placed at `bounds.maxY - buttonSize`.
+/// Because the card is anchored to the bottom of the screen, `bounds.maxY` is a fixed screen
+/// coordinate — the buttons do not move as the card grows upward.
+///
+/// **Expansion detection**: a hidden measurement TextField constrained to the compact text-field
+/// width (captured at runtime) drives `isExpanded` via its height, with no hardcoded character
+/// count and no feedback loop.
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -35,17 +37,9 @@ struct ChatComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
 
-    /// Whether the composer is in the expanded (stacked) layout.
     @State private var isExpanded = false
-    /// Height of the measurement probe at exactly one line of text. Captured once on first appear;
-    /// expansion triggers when the probe exceeds this by more than 2 pt.
     @State private var singleLineHeight: CGFloat = 0
-    /// Actual width of the text field while in compact layout (squeezed between the buttons).
-    /// Captured at runtime via onGeometryChange; the hidden measurement probe is constrained to
-    /// this width so both expand and collapse use the same reference — no feedback loop.
     @State private var compactTextWidth: CGFloat = 0
-
-    /// Diameter of the round action buttons.
     @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
 
     var body: some View {
@@ -63,84 +57,51 @@ struct ChatComposer: View {
                 .scrollIndicators(.hidden)
             }
 
-            // The input area uses a fixed structure so the TextField is never removed and
-            // re-added during the layout transition (which would dismiss the keyboard).
-            //
-            // Compact: HStack with buttons visible at full buttonSize width.
-            // Expanded: same HStack, buttons animated to width 0 and clipped out; the VStack
-            //           below the TextField grows to show the action row.
-            //
-            // spacing also animates to 0 when buttons collapse so there is no phantom gap.
-            HStack(alignment: .bottom, spacing: isExpanded ? 0 : 8) {
-                // Add button: always rendered at a stable position; collapses to 0 when expanded.
+            ComposerInputLayout(isExpanded: isExpanded, buttonSize: buttonSize, spacing: 8) {
                 if let onAdd {
-                    ComposerCircleButton("Add images", systemImage: "plus", size: buttonSize, action: onAdd)
+                    ComposerCircleButton(
+                        "Add images", systemImage: "plus", size: buttonSize, action: onAdd)
                         .disabled(isBusy)
-                        .frame(width: isExpanded ? 0 : buttonSize)
-                        .clipped()
+                } else {
+                    Color.clear.frame(width: 0, height: 0)
                 }
-
-                // The TextField is always inside this VStack at child index 0 — never moved,
-                // never recreated. Focus (and the keyboard) survive the layout change.
-                VStack(alignment: .leading, spacing: 8) {
-                    composerTextField
-                    if isExpanded {
-                        actionRow
-                    }
+                composerTextField
+                if isBusy {
+                    ComposerCircleButton(
+                        "Stop", systemImage: "stop.fill", size: buttonSize,
+                        prominent: true, action: onStop)
+                } else {
+                    ComposerCircleButton(
+                        "Send", systemImage: "arrow.up", size: buttonSize,
+                        prominent: true, action: onSend)
+                        .disabled(!canSend)
                 }
-
-                // Send/stop: collapses to 0 when expanded (also shown in actionRow).
-                sendStopButton
-                    .frame(width: isExpanded ? 0 : buttonSize)
-                    .clipped()
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        // The measurement probe sits here as a background at the same width as the padded VStack
-        // content. Because it is never constrained by buttons, its width is stable regardless of
-        // which layout mode is active — no feedback loop is possible.
-        .background(alignment: .top) {
-            measurementProbe
-        }
+        .background(alignment: .top) { measurementProbe }
         .glassEffect(.regular, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
         .animation(.spring(duration: 0.28, bounce: 0.12), value: isExpanded)
     }
 
-    // MARK: - Measurement probe
-
-    /// A hidden, non-interactive copy of the text field constrained to `compactTextWidth`.
-    ///
-    /// Because its width never changes (it is not affected by which layout mode is active),
-    /// its height is a stable signal for both expand and collapse:
-    /// - `height > singleLineHeight + 2`  → text would wrap in compact mode → expand
-    /// - `height ≤ singleLineHeight + 2`  → text fits on one line in compact mode → collapse
-    ///
-    /// `singleLineHeight` is set on first appear (draft is empty → one line).
     private var measurementProbe: some View {
         TextField("", text: $draft, axis: .vertical)
             .lineLimit(1 ... 6)
             .textFieldStyle(.plain)
             .padding(.vertical, 7)
-            // Constrain to compact width once it is known; fall back to full width on the first
-            // layout pass (before compactTextWidth is captured) — acceptable because the
-            // single-line height is font-size-dependent, not width-dependent.
             .frame(width: compactTextWidth > 0 ? compactTextWidth : nil, alignment: .leading)
             .opacity(0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { newHeight in
-                if singleLineHeight == 0 {
-                    singleLineHeight = newHeight
-                }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+                if singleLineHeight == 0 { singleLineHeight = h }
                 guard singleLineHeight > 0 else { return }
-                isExpanded = newHeight > singleLineHeight + 2
+                isExpanded = h > singleLineHeight + 2
             }
     }
-
-    // MARK: - Sub-views
 
     @ViewBuilder private var composerTextField: some View {
         TextField("Message", text: $draft, axis: .vertical)
@@ -148,42 +109,59 @@ struct ChatComposer: View {
             .textFieldStyle(.plain)
             .lineLimit(1 ... 6)
             .padding(.vertical, 7)
-            // Capture the compact width while in compact layout so the measurement probe can be
-            // constrained to the same reference width for both expand and collapse detection.
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
                 if !isExpanded, w > 0 { compactTextWidth = w }
             }
     }
+}
 
-    @ViewBuilder private var addButton: some View {
-        if let onAdd {
-            ComposerCircleButton("Add images", systemImage: "plus", size: buttonSize, action: onAdd)
-                .disabled(isBusy)
-        }
-    }
+private struct ComposerInputLayout: Layout {
+    var isExpanded: Bool
+    var buttonSize: CGFloat
+    var spacing: CGFloat
 
-    @ViewBuilder private var sendStopButton: some View {
-        if isBusy {
-            ComposerCircleButton(
-                "Stop", systemImage: "stop.fill", size: buttonSize, prominent: true, action: onStop)
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 3 else { return proposal.replacingUnspecifiedDimensions() }
+        let totalWidth = proposal.replacingUnspecifiedDimensions().width
+        let hasLeading = subviews[0].sizeThatFits(.unspecified).width > 0
+        if isExpanded {
+            let textH = subviews[1].sizeThatFits(ProposedViewSize(width: totalWidth, height: nil)).height
+            return CGSize(width: totalWidth, height: textH + spacing + buttonSize)
         } else {
-            ComposerCircleButton(
-                "Send", systemImage: "arrow.up", size: buttonSize, prominent: true, action: onSend)
-                .disabled(!canSend)
+            var textW = totalWidth - buttonSize - spacing
+            if hasLeading { textW -= buttonSize + spacing }
+            let textH = subviews[1].sizeThatFits(ProposedViewSize(width: max(0, textW), height: nil)).height
+            return CGSize(width: totalWidth, height: max(textH, buttonSize))
         }
     }
 
-    private var actionRow: some View {
-        HStack(spacing: 8) {
-            addButton
-            Spacer(minLength: 0)
-            sendStopButton
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 3 else { return }
+        let hasLeading = subviews[0].sizeThatFits(.unspecified).width > 0
+        let buttonY = bounds.maxY - buttonSize
+        let bp = ProposedViewSize(width: buttonSize, height: buttonSize)
+        if isExpanded {
+            let textH = bounds.height - spacing - buttonSize
+            subviews[1].place(at: bounds.origin, anchor: .topLeading,
+                              proposal: ProposedViewSize(width: bounds.width, height: textH))
+            if hasLeading {
+                subviews[0].place(at: CGPoint(x: bounds.minX, y: buttonY), anchor: .topLeading, proposal: bp)
+            }
+            subviews[2].place(at: CGPoint(x: bounds.maxX - buttonSize, y: buttonY), anchor: .topLeading, proposal: bp)
+        } else {
+            var leadingEdge = bounds.minX
+            if hasLeading {
+                subviews[0].place(at: CGPoint(x: leadingEdge, y: buttonY), anchor: .topLeading, proposal: bp)
+                leadingEdge += buttonSize + spacing
+            }
+            subviews[2].place(at: CGPoint(x: bounds.maxX - buttonSize, y: buttonY), anchor: .topLeading, proposal: bp)
+            let textW = bounds.maxX - buttonSize - spacing - leadingEdge
+            subviews[1].place(at: CGPoint(x: leadingEdge, y: bounds.minY), anchor: .topLeading,
+                              proposal: ProposedViewSize(width: max(0, textW), height: nil))
         }
     }
 }
 
-/// A round icon button of the composer's action row, `size` points wide and high. `prominent` fills it
-/// with the accent color (send, stop).
 private struct ComposerCircleButton: View {
     let title: String
     let systemImage: String
@@ -216,7 +194,6 @@ private struct ComposerCircleButton: View {
     }
 }
 
-/// An image waiting in the composer, with a round button in its corner that removes it.
 private struct PendingImageThumbnail: View {
     let data: Data
     let onRemove: () -> Void
@@ -243,8 +220,6 @@ private struct PendingImageThumbnail: View {
     }
 }
 
-/// A short status line (progress, error, notice) floating above the composer, readable over the
-/// messages that scroll beneath it.
 struct ComposerStatus<Content: View>: View {
     @ViewBuilder let content: Content
 
