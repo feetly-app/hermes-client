@@ -280,7 +280,7 @@ private extension ChatView {
 }
 
 /// One message of a conversation. A reply is laid out straight on the page, full width, without a
-/// background; a message from the user sits in a rounded bubble on the right, with its photos above it.
+/// background; a message from the user sits in a rounded bubble on the right, with its images above it.
 struct MessageRow: View {
     let line: TranscriptLine
 
@@ -311,16 +311,12 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var images: some View {
-        if !line.images.isEmpty {
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(Array(line.images.enumerated()), id: \.offset) { _, image in
-                        AttachmentThumbnail(data: image.data)
-                    }
-                }
-            }
-            // Also aligns photos that fit: on the right for a message from the user.
-            .defaultScrollAnchor(isUser ? .trailing : .leading)
+        if !line.images.isEmpty || line.missingImageCount > 0 {
+            MessageImages(
+                images: line.images,
+                missingCount: line.missingImageCount,
+                alignment: isUser ? .trailing : .leading
+            )
         }
     }
 }
