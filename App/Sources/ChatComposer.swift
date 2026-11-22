@@ -3,7 +3,23 @@ import HermesChat
 import SwiftUI
 
 /// The message composer floating over the bottom of a conversation: a rounded glass card with the
-/// images waiting to be sent, the text field, and a row of actions (add, send or stop).
+/// images waiting to be sent, the text field, and the action buttons (add, send or stop).
+///
+/// Layout mirrors ChatGPT: single-row when the draft fits on one line, then animates to a stacked
+/// layout (text full-width on top, button row below) as the user types.
+///
+/// **Keyboard preservation**: a custom `ComposerInputLayout` holds the add button, the text field,
+/// and the send/stop button as three always-present subviews. The layout repositions them between
+/// compact and expanded without ever removing or re-adding any view, so SwiftUI never drops focus
+/// and the keyboard stays up during the transition.
+///
+/// **Button stability**: in both modes the buttons are placed at `bounds.maxY - buttonSize`.
+/// Because the card is anchored to the bottom of the screen, `bounds.maxY` is a fixed screen
+/// coordinate — the buttons do not move as the card grows upward.
+///
+/// **Expansion detection**: a hidden measurement TextField constrained to the compact text-field
+/// width (captured at runtime) drives `isExpanded` via its height, with no hardcoded character
+/// count and no feedback loop.
 ///
 /// Both the local and the remote conversation screens use it. A screen that takes text only passes
 /// no `onAdd`, which hides the add button.
@@ -16,19 +32,18 @@ struct ChatComposer: View {
     var onRemoveImage: (Int) -> Void = { _ in }
     /// Opens the add sheet. `nil` hides the add button.
     var onAdd: (() -> Void)?
-    /// The model of the conversation, shown next to the add button. `nil` shows nothing.
-    var model: ModelChoice?
     let isBusy: Bool
     let canSend: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
-    /// Height of the action row: the model capsule, and the diameter of the round buttons beside it.
-    /// It is the capsule's natural height (subheadline text plus 10 pt above and below) and follows Dynamic Type.
-    @ScaledMetric(relativeTo: .subheadline) private var controlHeight: CGFloat = 38
+    @State private var isExpanded = false
+    @State private var singleLineHeight: CGFloat = 0
+    @State private var compactTextWidth: CGFloat = 0
+    @ScaledMetric(relativeTo: .subheadline) private var buttonSize: CGFloat = 32
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if !pendingImages.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 10) {
@@ -42,69 +57,111 @@ struct ChatComposer: View {
                 .scrollIndicators(.hidden)
             }
 
-            TextField("Message", text: $draft, axis: .vertical)
-                .focused(isFocused)
-                .textFieldStyle(.plain)
-                .lineLimit(1 ... 6)
-                .padding(.horizontal, 6)
-                .padding(.top, pendingImages.isEmpty ? 6 : 0)
-
-            HStack(spacing: 10) {
+            ComposerInputLayout(isExpanded: isExpanded, buttonSize: buttonSize, spacing: 8) {
                 if let onAdd {
-                    ComposerCircleButton("Add images", systemImage: "plus", size: controlHeight, action: onAdd)
+                    ComposerCircleButton(
+                        "Add images", systemImage: "plus", size: buttonSize, action: onAdd)
                         .disabled(isBusy)
+                } else {
+                    Color.clear.frame(width: 0, height: 0)
                 }
-
-                if let model {
-                    ModelBadge(model: model, height: controlHeight)
-                }
-
-                Spacer(minLength: 0)
-
+                composerTextField
                 if isBusy {
                     ComposerCircleButton(
-                        "Stop", systemImage: "stop.fill", size: controlHeight, prominent: true, action: onStop)
+                        "Stop", systemImage: "stop.fill", size: buttonSize,
+                        prominent: true, action: onStop)
                 } else {
                     ComposerCircleButton(
-                        "Send", systemImage: "arrow.up", size: controlHeight, prominent: true, action: onSend)
+                        "Send", systemImage: "arrow.up", size: buttonSize,
+                        prominent: true, action: onSend)
                         .disabled(!canSend)
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(alignment: .top) { measurementProbe }
         .glassEffect(.regular, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
+        .animation(.spring(duration: 0.28, bounce: 0.12), value: isExpanded)
     }
-}
 
-/// The model of the conversation, in a capsule: the model name, then its provider in a lighter tone.
-/// The model is fixed when a conversation starts, so the badge is not a button.
-private struct ModelBadge: View {
-    let model: ModelChoice
-    let height: CGFloat
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(model.model)
-            if let provider = model.provider {
-                Text(provider)
-                    .foregroundStyle(.secondary)
+    private var measurementProbe: some View {
+        TextField("", text: $draft, axis: .vertical)
+            .lineLimit(1 ... 6)
+            .textFieldStyle(.plain)
+            .padding(.vertical, 7)
+            .frame(width: compactTextWidth > 0 ? compactTextWidth : nil, alignment: .leading)
+            .opacity(0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+                if singleLineHeight == 0 { singleLineHeight = h }
+                guard singleLineHeight > 0 else { return }
+                isExpanded = h > singleLineHeight + 2
             }
-        }
-        .font(.subheadline)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .padding(.horizontal, 14)
-        .frame(height: height)
-        .glassEffect(.regular, in: .capsule)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Model: \(model.displayName)")
+    }
+
+    @ViewBuilder private var composerTextField: some View {
+        TextField("Message", text: $draft, axis: .vertical)
+            .focused(isFocused)
+            .textFieldStyle(.plain)
+            .lineLimit(1 ... 6)
+            .padding(.vertical, 7)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
+                if !isExpanded, w > 0 { compactTextWidth = w }
+            }
     }
 }
 
-/// A round icon button of the composer's action row, `size` points wide and high. `prominent` fills it
-/// with the accent color (send, stop).
+private struct ComposerInputLayout: Layout {
+    var isExpanded: Bool
+    var buttonSize: CGFloat
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 3 else { return proposal.replacingUnspecifiedDimensions() }
+        let totalWidth = proposal.replacingUnspecifiedDimensions().width
+        let hasLeading = subviews[0].sizeThatFits(.unspecified).width > 0
+        if isExpanded {
+            let textH = subviews[1].sizeThatFits(ProposedViewSize(width: totalWidth, height: nil)).height
+            return CGSize(width: totalWidth, height: textH + spacing + buttonSize)
+        } else {
+            var textW = totalWidth - buttonSize - spacing
+            if hasLeading { textW -= buttonSize + spacing }
+            let textH = subviews[1].sizeThatFits(ProposedViewSize(width: max(0, textW), height: nil)).height
+            return CGSize(width: totalWidth, height: max(textH, buttonSize))
+        }
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 3 else { return }
+        let hasLeading = subviews[0].sizeThatFits(.unspecified).width > 0
+        let buttonY = bounds.maxY - buttonSize
+        let bp = ProposedViewSize(width: buttonSize, height: buttonSize)
+        if isExpanded {
+            let textH = bounds.height - spacing - buttonSize
+            subviews[1].place(at: bounds.origin, anchor: .topLeading,
+                              proposal: ProposedViewSize(width: bounds.width, height: textH))
+            if hasLeading {
+                subviews[0].place(at: CGPoint(x: bounds.minX, y: buttonY), anchor: .topLeading, proposal: bp)
+            }
+            subviews[2].place(at: CGPoint(x: bounds.maxX - buttonSize, y: buttonY), anchor: .topLeading, proposal: bp)
+        } else {
+            var leadingEdge = bounds.minX
+            if hasLeading {
+                subviews[0].place(at: CGPoint(x: leadingEdge, y: buttonY), anchor: .topLeading, proposal: bp)
+                leadingEdge += buttonSize + spacing
+            }
+            subviews[2].place(at: CGPoint(x: bounds.maxX - buttonSize, y: buttonY), anchor: .topLeading, proposal: bp)
+            let textW = bounds.maxX - buttonSize - spacing - leadingEdge
+            subviews[1].place(at: CGPoint(x: leadingEdge, y: bounds.minY), anchor: .topLeading,
+                              proposal: ProposedViewSize(width: max(0, textW), height: nil))
+        }
+    }
+}
+
 private struct ComposerCircleButton: View {
     let title: String
     let systemImage: String
@@ -137,7 +194,6 @@ private struct ComposerCircleButton: View {
     }
 }
 
-/// An image waiting in the composer, with a round button in its corner that removes it.
 private struct PendingImageThumbnail: View {
     let data: Data
     let onRemove: () -> Void
@@ -164,8 +220,6 @@ private struct PendingImageThumbnail: View {
     }
 }
 
-/// A short status line (progress, error, notice) floating above the composer, readable over the
-/// messages that scroll beneath it.
 struct ComposerStatus<Content: View>: View {
     @ViewBuilder let content: Content
 

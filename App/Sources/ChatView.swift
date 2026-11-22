@@ -154,7 +154,6 @@ private extension ChatView {
                 pendingImages: pending.attachments,
                 onRemoveImage: removeImage,
                 onAdd: { isAddingImages = true },
-                model: transcript.model,
                 isBusy: transcript.isSending,
                 canSend: canSend,
                 onSend: send,
