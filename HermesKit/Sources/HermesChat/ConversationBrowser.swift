@@ -273,6 +273,7 @@ public final class ConversationBrowser {
         if isOpen {
             openedRemote = nil
         }
+        await detachFromProject(sessionID)
     }
 
     // MARK: Private
@@ -289,12 +290,45 @@ public final class ConversationBrowser {
         }
         let sessionID = transcript.activeSessionID
         guard unsentSessionIDs.remove(sessionID) != nil, !transcript.hasSent else { return }
-        Task { try? await remoteSessions.delete(sessionID) }
+        Task {
+            guard (try? await remoteSessions.delete(sessionID)) != nil else { return }
+            await detachFromProject(sessionID)
+        }
+    }
+
+    /// Takes a session deleted on the instance out of its project, so the project no longer names it. Best
+    /// effort and silent: a project that still names it shows nothing for it, the instance answers `404`.
+    private func detachFromProject(_ sessionID: String) async {
+        guard let projects, let project = projects.project(containing: sessionID) else { return }
+        try? await projects.detach(sessionID, from: project.id)
+    }
+
+    /// The sidecar knows conversations by session id only. When a session created elsewhere is forked to take
+    /// a message, the fork goes in the original's project and the original leaves it. The message is sent
+    /// whatever happens; a failed attach only sets `projectNotice`, a failed detach is ignored.
+    private func carryProjectMembership(from originalID: String, to forkID: String) {
+        guard let projects, let project = projects.project(containing: originalID) else { return }
+        Task {
+            do {
+                try await projects.attach(forkID, to: project.id)
+            } catch {
+                projectNotice = "The conversation continues outside “\(project.name)”: it could not be kept in the "
+                    + "project. \(Self.reason(error))"
+                return
+            }
+            try? await projects.detach(originalID, from: project.id)
+        }
     }
 
     /// Follows a reply: once it ends, the session is no longer unsent, and the list is reloaded so that the
     /// row moves up and shows the title the instance may have given it.
     private func watch(_ transcript: RemoteTranscript) {
+        let onFork = transcript.onFork
+        let originalID = transcript.sessionID
+        transcript.onFork = { [weak self] fork in
+            onFork?(fork)
+            self?.carryProjectMembership(from: originalID, to: fork.id)
+        }
         transcript.onReplyEnded = { [weak self, weak transcript] in
             guard let self, let transcript else { return }
             unsentSessionIDs.remove(transcript.activeSessionID)

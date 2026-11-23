@@ -85,8 +85,23 @@ actor FakeInstance: SessionListing {
         }
     }
 
+    /// Forks are refused until `allowForks()`: most tests never fork.
+    private var forksAllowed = false
+    private(set) var forked: [String] = []
+
+    func allowForks() {
+        forksAllowed = true
+    }
+
+    /// The fork of `x` is `x-fork`, an API session that takes the original's place in the list.
     func forkSession(sessionID: String) async throws -> RemoteSession {
-        throw HermesAPIError.notFound
+        guard forksAllowed, let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            throw HermesAPIError.notFound
+        }
+        forked.append(sessionID)
+        let fork = RemoteSession(id: "\(sessionID)-fork", title: sessions[index].title, source: "api_server")
+        sessions[index] = fork
+        return fork
     }
 
     func createSession(model: String?, provider: String?) async throws -> RemoteSession {
