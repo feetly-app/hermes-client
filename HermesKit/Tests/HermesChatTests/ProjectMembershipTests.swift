@@ -31,6 +31,8 @@ struct ProjectMembershipTests {
         browser.select(.project("p1"))
         browser.openRemote(Self.dashboard, inProject: "p1")
         let transcript = try #require(browser.openedRemote)
+        // Opening starts loading the messages: the page would replace the lines of the reply.
+        await waitUntil { transcript.state == .loaded }
 
         await transcript.send("Hi")
         await waitUntil { await Self.hasCall(store, .detach(conversation: "x", project: "p1")) }
@@ -62,6 +64,8 @@ struct ProjectMembershipTests {
         await browser.reloadSessions()
         browser.openRemote(Self.dashboard, inProject: "p1")
         let transcript = try #require(browser.openedRemote)
+        // Opening starts loading the messages: the page would replace the lines of the reply.
+        await waitUntil { transcript.state == .loaded }
 
         await transcript.send("Hi")
         await waitUntil { browser.projectNotice != nil }
@@ -82,6 +86,8 @@ struct ProjectMembershipTests {
         await browser.reloadSessions()
         browser.select(.session("x"))
         let transcript = try #require(browser.openedRemote)
+        // Opening starts loading the messages: the page would replace the lines of the reply.
+        await waitUntil { transcript.state == .loaded }
 
         await transcript.send("Hi")
 
