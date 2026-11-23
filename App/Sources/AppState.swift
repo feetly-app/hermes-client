@@ -48,18 +48,19 @@ final class AppState {
             return
         }
         let client = HermesClient(configuration: HermesClientConfiguration(baseURL: baseURL, apiKey: key))
+        // Everything the sidecar adds (stored images, projects) needs one: without it, no sidecar request is made.
+        let sidecar = settings.sidecarClient(apiKey: key)
         browser = ConversationBrowser(
-            remoteSessions: RemoteSessionList(source: client, storedImages: Self.storedImages(settings, apiKey: key)),
+            remoteSessions: RemoteSessionList(source: client, storedImages: sidecar.map { Self.storedImages($0) }),
+            projects: sidecar.map { ProjectList(store: $0) },
             model: settings.modelChoice
         )
     }
 
-    /// Loads the images stored messages name through the sidecar, or `nil` when none is configured: the
+    /// Loads the images stored messages name through the sidecar. Without a sidecar there is no loader: the
     /// instance does not send them back, so they then show as not available.
-    private static func storedImages(_ settings: ConnectionSettings, apiKey: String) -> StoredImageLoader? {
-        guard let sidecarURL = settings.sidecarURL else { return nil }
-        let sidecar = SidecarClient(configuration: HermesClientConfiguration(baseURL: sidecarURL, apiKey: apiKey))
-        return StoredImageLoader(fetcher: sidecar, cache: StoredImageCache.inCaches())
+    private static func storedImages(_ sidecar: SidecarClient) -> StoredImageLoader {
+        StoredImageLoader(fetcher: sidecar, cache: StoredImageCache.inCaches())
     }
 
     /// Deletes the copies of sent images that earlier versions kept in `Caches/Sent Images`: the sidecar
