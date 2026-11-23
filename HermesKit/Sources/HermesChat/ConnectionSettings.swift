@@ -1,4 +1,9 @@
 import Foundation
+import HermesAPI
+
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 
 /// Non-secret connection settings. The API key is stored separately, in a `SecretStore`.
 ///
@@ -94,6 +99,14 @@ public struct ConnectionSettings: Codable, Equatable, Sendable {
             return url
         }
         return trimmed
+    }
+
+    /// A client for the sidecar, with the instance's API key, or `nil` when no sidecar is configured (or its
+    /// location does not resolve). Everything the sidecar adds, stored images and projects, is built from it,
+    /// so without one no sidecar request is made.
+    public func sidecarClient(apiKey: String, session: URLSession = .shared) -> SidecarClient? {
+        guard let sidecarURL else { return nil }
+        return SidecarClient(configuration: HermesClientConfiguration(baseURL: sidecarURL, apiKey: apiKey), session: session)
     }
 
     /// `true` when the URL parses, the model name is not blank, and the sidecar, if filled in, resolves.
