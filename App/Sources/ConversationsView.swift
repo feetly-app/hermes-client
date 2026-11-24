@@ -2,9 +2,7 @@ import HermesAPI
 import HermesChat
 import SwiftUI
 
-/// Main screen: a split view with the sidebar (projects and conversations) and the open conversation or project.
-/// A new conversation is a session created on the instance, on the model set in the connection settings.
-/// On compact widths the split view collapses into a navigation stack.
+/// Main screen: a single global NavigationStack (simplest, robust multiplatform native pattern).
 struct ConversationsView: View {
     let browser: ConversationBrowser
     /// Edited by the settings sheet.
@@ -15,41 +13,19 @@ struct ConversationsView: View {
     @State private var failure: String?
 
     var body: some View {
-        NavigationSplitView {
-            NavigationStack {
-                ConversationListView(browser: browser, failure: $failure)
-                    .navigationTitle("Conversations")
-                    .sidebarToolbar(
-                        isShowingSettings: $isShowingSettings,
-                        isCreating: browser.isCreating,
-                        startConversation: { startConversation(inProject: browser.openedProjectID) }
-                    )
-                    .projectNavigationDestinations(
-                        browser: browser,
-                        startConversation: { startConversation(inProject: $0) },
-                        failure: $failure
-                    )
-            }
-        } detail: {
-            Group {
-                if let transcript = browser.openedRemote {
-                    ChatView(transcript: transcript)
-                        // A new view per session: its draft and scroll position belong to one conversation.
-                        .id(transcript.sessionID)
-                } else if browser.isCreating {
-                    ProgressView("Starting the conversation…")
-                } else {
-                    ContentUnavailableView {
-                        Label("No conversation open", systemImage: "bubble.left.and.bubble.right")
-                    } description: {
-                        Text("Pick a conversation in the list, or start a new one.")
-                    } actions: {
-                        Button("New conversation") {
-                            startConversation(inProject: nil)
-                        }
-                    }
-                }
-            }
+        NavigationStack {
+            ConversationListView(browser: browser, failure: $failure)
+                .navigationTitle("Conversations")
+                .sidebarToolbar(
+                    isShowingSettings: $isShowingSettings,
+                    isCreating: browser.isCreating,
+                    startConversation: { startConversation(inProject: browser.openedProjectID) }
+                )
+                .projectNavigationDestinations(
+                    browser: browser,
+                    startConversation: { startConversation(inProject: $0) },
+                    failure: $failure
+                )
         }
         // ⌘N in the menu bar, see `NewConversationCommand`.
         .focusedSceneValue(\.newConversation, newConversationAction)
@@ -137,6 +113,17 @@ extension View {
                     startConversation: { startConversation(projectID) },
                     failure: failure
                 )
+            }
+            .navigationDestination(for: SidebarItem.self) { item in
+                if case .session(let sessionID) = item {
+                    if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
+                        ChatView(transcript: browser.transcript(for: session))
+                            .id(sessionID)
+                            .onAppear {
+                                browser.openRemote(session)
+                            }
+                    }
+                }
             }
     }
 }

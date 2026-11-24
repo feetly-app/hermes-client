@@ -32,7 +32,7 @@ struct ConversationListView: View {
     @State private var deletingProject: String?
 
     var body: some View {
-        List(selection: selection) {
+        List {
             if let projects = browser.projects, !isSearching || !matchingProjects.isEmpty {
                 Section {
                     ForEach(matchingProjects) { project in
@@ -295,20 +295,6 @@ struct ConversationListView: View {
     /// The user-facing reason of a project error.
     static func reason(_ error: any Error) -> String {
         ProjectError.from(error).errorDescription ?? "The request failed."
-    }
-
-    /// One selection for every row, projects and conversations. On compact widths the split view collapses
-    /// into a stack, and only the list selection pushes the detail: a row outside it never opens.
-    private var selection: Binding<SidebarItem?> {
-        Binding(
-            get: {
-                if case .project = browser.selection {
-                    return nil
-                }
-                return browser.selection
-            },
-            set: { browser.select($0) }
-        )
     }
 
     private var isRenaming: Binding<Bool> {
