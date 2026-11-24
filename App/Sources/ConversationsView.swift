@@ -16,35 +16,41 @@ struct ConversationsView: View {
 
     var body: some View {
         NavigationSplitView {
-            Group {
-                if let projectID = browser.openedProjectID {
-                    ProjectSidebarView(
-                        browser: browser,
-                        projectID: projectID,
-                        startConversation: { startConversation(inProject: projectID) },
-                        failure: $failure
-                    )
-                } else {
-                    ConversationListView(browser: browser, failure: $failure)
-                        .navigationTitle("Conversations")
-                }
-            }
-            .animation(.default, value: browser.openedProjectID)
-            .toolbar {
-                if browser.openedProjectID == nil {
-                    ToolbarItem(placement: .leadingAction) {
-                        Button("Settings", systemImage: "gearshape") {
-                            isShowingSettings = true
+            NavigationStack {
+                ConversationListView(browser: browser, failure: $failure)
+                    .navigationTitle("Conversations")
+                    .toolbar {
+                        ToolbarItem(placement: .leadingAction) {
+                            Button("Settings", systemImage: "gearshape") {
+                                isShowingSettings = true
+                            }
+                        }
+                        ToolbarItem(placement: .primaryAction) {
+                            // Always outside any project: a conversation in a project starts from its screen.
+                            Button("New conversation", systemImage: "square.and.pencil") {
+                                startConversation(inProject: browser.openedProjectID)
+                            }
+                            .disabled(browser.isCreating)
                         }
                     }
-                    ToolbarItem(placement: .primaryAction) {
-                        // Always outside any project: a conversation in a project starts from its screen.
-                        Button("New conversation", systemImage: "square.and.pencil") {
-                            startConversation(inProject: nil)
-                        }
-                        .disabled(browser.isCreating)
+                    // Project destination pushed natively inside the sidebar stack!
+                    .navigationDestination(for: Project.self) { project in
+                        ProjectSidebarView(
+                            browser: browser,
+                            projectID: project.id,
+                            startConversation: { startConversation(inProject: project.id) },
+                            failure: $failure
+                        )
                     }
-                }
+                    // Conversation destination pushed natively inside the sidebar stack (for collapsed widths)!
+                    .navigationDestination(for: SidebarItem.self) { item in
+                        if case .session(let sessionID) = item {
+                            if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
+                                ChatView(transcript: browser.transcript(for: session))
+                                    .id(sessionID)
+                            }
+                        }
+                    }
             }
         } detail: {
             Group {

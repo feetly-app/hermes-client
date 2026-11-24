@@ -39,13 +39,6 @@ struct ProjectSidebarView: View {
                 }
                 .navigationTitle(project.name)
                 .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        Button {
-                            browser.select(nil)
-                        } label: {
-                            Image(systemName: "chevron.left")
-                        }
-                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
                             .disabled(browser.isCreating)
@@ -192,13 +185,14 @@ struct ProjectSidebarView: View {
                 }
             } else {
                 ForEach(sessions) { session in
-                    Label {
-                        Text(session.displayTitle)
-                    } icon: {
-                        Image(systemName: ConversationListView.icon(for: session.kind))
+                    NavigationLink(value: SidebarItem.session(session.id)) {
+                        Label {
+                            Text(session.displayTitle)
+                        } icon: {
+                            Image(systemName: ConversationListView.icon(for: session.kind))
+                        }
                     }
                     .lineLimit(1)
-                    .tag(SidebarItem.session(session.id))
                     .modifier(RowActions(
                         onRename: {
                             draftTitle = session.title ?? ""

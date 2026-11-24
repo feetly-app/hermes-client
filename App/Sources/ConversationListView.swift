@@ -175,15 +175,16 @@ struct ConversationListView: View {
 
     /// One line: a folder and the project name.
     private func projectRow(_ project: Project) -> some View {
-        Label {
-            Text(project.name)
-        } icon: {
-            Image(systemName: "folder")
-                .foregroundStyle(.primary)
+        NavigationLink(value: project) {
+            Label {
+                Text(project.name)
+            } icon: {
+                Image(systemName: "folder")
+                    .foregroundStyle(.primary)
+            }
+            .lineLimit(1)
+            .listItemTint(.monochrome)
         }
-        .lineLimit(1)
-        .listItemTint(.monochrome)
-        .tag(SidebarItem.project(project.id))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: {
@@ -198,15 +199,16 @@ struct ConversationListView: View {
     /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
     /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
-        Label {
-            Text(session.displayTitle)
-        } icon: {
-            Image(systemName: Self.icon(for: session.kind))
-                .foregroundStyle(.primary)
+        NavigationLink(value: SidebarItem.session(session.id)) {
+            Label {
+                Text(session.displayTitle)
+            } icon: {
+                Image(systemName: Self.icon(for: session.kind))
+                    .foregroundStyle(.primary)
+            }
+            .lineLimit(1)
+            .listItemTint(.monochrome)
         }
-        .lineLimit(1)
-        .listItemTint(.monochrome)
-        .tag(SidebarItem.session(session.id))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },
