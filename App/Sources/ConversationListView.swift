@@ -175,15 +175,16 @@ struct ConversationListView: View {
 
     /// One line: a folder and the project name.
     private func projectRow(_ project: Project) -> some View {
-        Label {
-            Text(project.name)
-        } icon: {
-            Image(systemName: "folder")
-                .foregroundStyle(.primary)
+        NavigationLink(value: project.id) {
+            Label {
+                Text(project.name)
+            } icon: {
+                Image(systemName: "folder")
+                    .foregroundStyle(.primary)
+            }
+            .lineLimit(1)
+            .listItemTint(.monochrome)
         }
-        .lineLimit(1)
-        .listItemTint(.monochrome)
-        .tag(SidebarItem.project(project.id))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: {
@@ -222,7 +223,7 @@ struct ConversationListView: View {
         #endif
     }
 
-    private static func icon(for kind: SessionKind) -> String {
+    static func icon(for kind: SessionKind) -> String {
         switch kind {
         case .chat: "bubble.left"
         case .scheduled: "clock"
@@ -299,7 +300,12 @@ struct ConversationListView: View {
     /// into a stack, and only the list selection pushes the detail: a row outside it never opens.
     private var selection: Binding<SidebarItem?> {
         Binding(
-            get: { browser.selection },
+            get: {
+                if case .project = browser.selection {
+                    return nil
+                }
+                return browser.selection
+            },
             set: { browser.select($0) }
         )
     }
@@ -370,7 +376,7 @@ extension View {
 }
 
 /// Rename and delete, in the context menu and as trailing swipe actions.
-private struct RowActions: ViewModifier {
+struct RowActions: ViewModifier {
     let onRename: () -> Void
     let onDelete: () -> Void
 

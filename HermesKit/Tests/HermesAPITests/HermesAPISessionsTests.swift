@@ -381,4 +381,30 @@ struct HermesAPISessionsTests {
         SessionsURLProtocol.responder = { _ in SessionsReply(status: 401) }
         await #expect(throws: HermesAPIError.unauthorized) { try await makeClient().checkConnection() }
     }
+
+    @Test("one session is an authenticated GET to /api/sessions/{id}, read wrapped or bare; a gone one is notFound")
+    func getSession() async throws {
+        SessionsURLProtocol.responder = { _ in
+            SessionsReply(body: Data(#"{"session":{"id":"s1","title":"Wrapped","source":"api_server","extra":1}}"#.utf8))
+        }
+        let wrapped = try await makeClient().getSession(sessionID: "s1")
+        #expect(wrapped.title == "Wrapped")
+        let request = try #require(SessionsURLProtocol.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://hermes.example.test/api/sessions/s1")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key-123")
+
+        SessionsURLProtocol.responder = { _ in SessionsReply(body: Data(#"{"id":"s1","title":"Bare"}"#.utf8)) }
+        #expect(try await makeClient().getSession(sessionID: "s1").title == "Bare")
+
+        SessionsURLProtocol.responder = { _ in SessionsReply(status: 404) }
+        await #expect(throws: HermesAPIError.notFound) { try await makeClient().getSession(sessionID: "gone") }
+
+        SessionsURLProtocol.responder = { _ in SessionsReply(body: Data("[]".utf8)) }
+        await #expect(throws: HermesAPIError.invalidResponse) { try await makeClient().getSession(sessionID: "s1") }
+
+        SessionsURLProtocol.reset()
+        await #expect(throws: HermesAPIError.invalidResponse) { try await makeClient().getSession(sessionID: "a/b") }
+        #expect(SessionsURLProtocol.requests.isEmpty)
+    }
 }

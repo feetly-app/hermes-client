@@ -284,6 +284,29 @@ public struct HermesClient: Sendable {
         )
     }
 
+    /// Fetches one session, from `GET {baseURL}/api/sessions/{id}`. Used for a session a project names that
+    /// the loaded pages do not hold. A session that is gone throws `HermesAPIError.notFound`.
+    ///
+    /// needs-verification: the body is read as `{"session": {...}}`, as `PATCH` answers, or as the bare session.
+    public func getSession(sessionID: String) async throws -> RemoteSession {
+        do {
+            try Self.checkPathSegment(sessionID)
+            let request = makeRequest(method: "GET", path: HermesAPIPaths.session(sessionID), accept: "application/json")
+            let (data, response) = try await session.data(for: request)
+            try Self.validate(response, requestURL: request.url)
+            if let body = try? JSONDecoder().decode(SessionBody.self, from: data) {
+                return body.session
+            }
+            return try JSONDecoder().decode(RemoteSession.self, from: data)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            throw HermesAPIError.from(error)
+        }
+    }
+
     /// Renames a session, from `PATCH {baseURL}/api/sessions/{id}`, and returns the updated session.
     public func renameSession(sessionID: String, title: String) async throws -> RemoteSession {
         try Self.checkPathSegment(sessionID)

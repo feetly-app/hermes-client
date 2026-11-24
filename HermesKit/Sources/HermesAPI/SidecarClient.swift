@@ -134,6 +134,23 @@ public struct SidecarClient: Sendable {
         )
     }
 
+    /// Attaches a repository to a project, from `POST {sidecar}/projects/{id}/repositories`, and returns it.
+    /// Throws `ProjectError`.
+    public func attachRepository(url: String, projectID: String) async throws -> ProjectRepository {
+        try Self.checkProjectID(projectID)
+        let body = try JSONEncoder().encode(RepositoryURLBody(url: url))
+        let data = try await projectRequest(method: "POST", path: SidecarPaths.projectRepositories(projectID: projectID), body: body)
+        return try decode(ProjectRepository.self, from: data)
+    }
+
+    /// Detaches a repository from a project, from `DELETE {sidecar}/projects/{id}/repositories/{repository_id}`.
+    /// Throws `ProjectError`.
+    public func detachRepository(repositoryID: String, projectID: String) async throws {
+        try Self.checkProjectID(projectID)
+        try Self.checkRepositoryID(repositoryID)
+        _ = try await projectRequest(method: "DELETE", path: SidecarPaths.projectRepository(projectID: projectID, repositoryID: repositoryID))
+    }
+
     /// Sends a project request and returns the body of a 2xx response that was not redirected. Error bodies
     /// map to `ProjectError`; cancellation throws `CancellationError`.
     private func projectRequest(method: String, path: String, body: Data? = nil) async throws -> Data {
@@ -179,8 +196,19 @@ public struct SidecarClient: Sendable {
         }
     }
 
+    /// A repository id goes into the path: it must be a single, non-empty segment.
+    private static func checkRepositoryID(_ repositoryID: String) throws {
+        guard !repositoryID.isEmpty, !repositoryID.contains("/") else {
+            throw ProjectError.repositoryNotFound
+        }
+    }
+
     private struct ProjectNameBody: Encodable {
         let name: String
+    }
+
+    private struct RepositoryURLBody: Encodable {
+        let url: String
     }
 
     private struct StatusBody: Decodable {
@@ -218,5 +246,15 @@ public enum SidecarPaths {
     /// out. Both answer `204`, or `422 invalid_conversation_id`.
     public static func projectConversation(projectID: String, conversationID: String) -> String {
         "\(project(projectID))/conversations/\(conversationID)"
+    }
+
+    /// Repositories list of a project: `POST` attaches a new one from `{"url": "..."}`.
+    public static func projectRepositories(projectID: String) -> String {
+        "\(project(projectID))/repositories"
+    }
+
+    /// One repository of a project: `DELETE` detaches it.
+    public static func projectRepository(projectID: String, repositoryID: String) -> String {
+        "\(project(projectID))/repositories/\(repositoryID)"
     }
 }

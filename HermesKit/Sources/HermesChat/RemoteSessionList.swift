@@ -17,6 +17,7 @@ public protocol SessionListing: Sendable {
     func createSession(model: String?, provider: String?) async throws -> RemoteSession
     func renameSession(sessionID: String, title: String) async throws -> RemoteSession
     func deleteSession(sessionID: String) async throws
+    func getSession(sessionID: String) async throws -> RemoteSession
 }
 
 extension HermesClient: SessionListing {}
@@ -48,6 +49,11 @@ public final class RemoteSessionList {
     public private(set) var hasMore = false
 
     private let source: any SessionListing
+    /// Sessions fetched by id because the loaded pages did not hold them (see `fetchMissing(_:)`).
+    private var fetchedSessions: [String: RemoteSession] = [:]
+    /// Ids the instance answered `404` for.
+    private var orphanIDs: Set<String> = []
+    private var fetchingIDs: Set<String> = []
     private let storedImages: StoredImageLoader?
     /// Number of unpinned rows received so far, which is the offset of the next page.
     private var windowOffset = 0
@@ -66,6 +72,75 @@ public final class RemoteSessionList {
     /// The sessions, most recent activity first: the last activity of a session, or its start time when
     /// that is missing. Sessions without any date go last. Ties are broken by id, so the order is stable.
     public var recentFirst: [RemoteSession] {
+        Self.recentFirst(sessions)
+    }
+
+    /// The known sessions with these ids, most recent activity first: from the loaded pages, or fetched one
+    /// by one with `fetchMissing(_:)`. Ids not known yet, and orphans (sessions gone from the instance), are
+    /// left out.
+    public func sessions(withIDs ids: [String]) -> [RemoteSession] {
+        let wanted = Set(ids)
+        var found = sessions.filter { wanted.contains($0.id) }
+        let listed = Set(found.map(\.id))
+        found += wanted.subtracting(listed).compactMap { fetchedSessions[$0] }
+        return Self.recentFirst(found)
+    }
+
+    /// `true` when every one of these ids is known or an orphan: nothing is left to fetch.
+    public func knowsAll(_ ids: [String]) -> Bool {
+        ids.allSatisfy { isKnown($0) || orphanIDs.contains($0) }
+    }
+
+    /// Fetches, one request each, the sessions with these ids that the loaded pages do not hold. A session the
+    /// instance no longer has (`404`) is an orphan and is not asked for again; other failures are retried on
+    /// the next call.
+    public func fetchMissing(_ ids: [String]) async {
+        let missing = Set(ids).filter { !isKnown($0) && !orphanIDs.contains($0) && !fetchingIDs.contains($0) }
+        guard !missing.isEmpty else { return }
+        fetchingIDs.formUnion(missing)
+        defer { fetchingIDs.subtract(missing) }
+        let source = source
+        let results = await withTaskGroup(of: (String, FetchResult).self) { group in
+            for id in missing {
+                group.addTask {
+                    do {
+                        return (id, .found(try await source.getSession(sessionID: id)))
+                    } catch let error as HermesAPIError where error == .notFound {
+                        return (id, .gone)
+                    } catch {
+                        return (id, .failed)
+                    }
+                }
+            }
+            var results: [(String, FetchResult)] = []
+            for await result in group {
+                results.append(result)
+            }
+            return results
+        }
+        for (id, result) in results {
+            switch result {
+            case .found(let session):
+                fetchedSessions[id] = session
+            case .gone:
+                orphanIDs.insert(id)
+            case .failed:
+                break
+            }
+        }
+    }
+
+    private enum FetchResult: Sendable {
+        case found(RemoteSession)
+        case gone
+        case failed
+    }
+
+    private func isKnown(_ id: String) -> Bool {
+        fetchedSessions[id] != nil || sessions.contains { $0.id == id }
+    }
+
+    private static func recentFirst(_ sessions: [RemoteSession]) -> [RemoteSession] {
         sessions.sorted { lhs, rhs in
             switch (lhs.lastActive ?? lhs.startedAt, rhs.lastActive ?? rhs.startedAt) {
             case let (left?, right?) where left != right:
@@ -136,6 +211,7 @@ public final class RemoteSessionList {
     public func delete(_ sessionID: String) async throws {
         try await source.deleteSession(sessionID: sessionID)
         sessions.removeAll { $0.id == sessionID }
+        fetchedSessions[sessionID] = nil
     }
 
     /// The messages of one session, loaded on demand by the conversation screen. When the transcript moves
@@ -160,6 +236,8 @@ public final class RemoteSessionList {
 
     /// Puts `session` in place of the row with id `originalID`, or at the top if that row is gone.
     func replace(_ originalID: String, with session: RemoteSession) {
+        fetchedSessions[originalID] = nil
+        fetchedSessions[session.id] = nil
         sessions.removeAll { $0.id == session.id && $0.id != originalID }
         if let index = sessions.firstIndex(where: { $0.id == originalID }) {
             sessions[index] = session

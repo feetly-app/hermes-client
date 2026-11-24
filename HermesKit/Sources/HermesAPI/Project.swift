@@ -71,6 +71,12 @@ public enum ProjectError: Error, Sendable, Equatable {
     case projectNotFound
     /// `422 invalid_conversation_id`: the conversation id cannot be stored in a project.
     case invalidConversationID
+    /// `409 repository_already_attached`: this repository is already attached.
+    case repositoryAlreadyAttached
+    /// `422 invalid_repository_url`: unsupported or malformed URL. Carries the sidecar's explanation.
+    case invalidRepositoryURL(String)
+    /// `404 repository_not_found`: the repository is not in this project, or the id is not one.
+    case repositoryNotFound
     /// Any other failure: network, key, server error, unexpected response.
     case api(HermesAPIError)
 
@@ -86,6 +92,12 @@ public enum ProjectError: Error, Sendable, Equatable {
             return .projectNotFound
         case (422, "invalid_conversation_id"):
             return .invalidConversationID
+        case (409, "repository_already_attached"):
+            return .repositoryAlreadyAttached
+        case (422, "invalid_repository_url"):
+            return .invalidRepositoryURL(code?.message ?? "")
+        case (404, "repository_not_found"):
+            return .repositoryNotFound
         default:
             return .api(HermesAPIError.from(status: status) ?? .invalidResponse)
         }
@@ -120,6 +132,12 @@ extension ProjectError: LocalizedError {
             "This project no longer exists."
         case .invalidConversationID:
             "This conversation cannot be put in a project."
+        case .repositoryAlreadyAttached:
+            "This repository is already attached to this project."
+        case .invalidRepositoryURL(let reason):
+            reason.isEmpty ? "This repository URL is not supported." : "This repository URL is not supported: \(reason)."
+        case .repositoryNotFound:
+            "This repository is not in this project."
         case .api(.notFound):
             "The sidecar does not know projects (404). Update hermes-sidecar or check its location."
         case .api(let error):

@@ -13,6 +13,8 @@ public protocol ProjectStoring: Sendable {
     func deleteProject(projectID: String) async throws
     func attachConversation(conversationID: String, projectID: String) async throws
     func detachConversation(conversationID: String, projectID: String) async throws
+    func attachRepository(url: String, projectID: String) async throws -> ProjectRepository
+    func detachRepository(repositoryID: String, projectID: String) async throws
 }
 
 extension SidecarClient: ProjectStoring {}
@@ -128,6 +130,27 @@ public final class ProjectList {
         guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
         let project = projects[index]
         projects[index] = project.with(conversationIDs: project.conversationIDs.filter { $0 != conversationID })
+    }
+
+    /// Attaches a repository to a project.
+    public func attachRepository(url: String, to projectID: String) async throws -> ProjectRepository {
+        let repo = try await Self.run { try await store.attachRepository(url: url, projectID: projectID) }
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return repo }
+        let project = projects[index]
+        var repos = project.repositories.filter { $0.id != repo.id }
+        repos.append(repo)
+        repos.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        projects[index] = Project(id: project.id, name: project.name, repositories: repos, conversationIDs: project.conversationIDs)
+        return repo
+    }
+
+    /// Detaches a repository from a project.
+    public func detachRepository(_ repositoryID: String, from projectID: String) async throws {
+        try await Self.run { try await store.detachRepository(repositoryID: repositoryID, projectID: projectID) }
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        let project = projects[index]
+        let repos = project.repositories.filter { $0.id != repositoryID }
+        projects[index] = Project(id: project.id, name: project.name, repositories: repos, conversationIDs: project.conversationIDs)
     }
 
     // MARK: Private

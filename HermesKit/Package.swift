@@ -9,8 +9,8 @@ let strictConcurrency: [SwiftSetting] = [
 let package = Package(
     name: "HermesKit",
     platforms: [
-        .iOS("27.0"),
-        .macOS("27.0"),
+        .iOS("27.1"),
+        .macOS("27.1"),
     ],
     products: [
         .library(name: "HermesAPI", targets: ["HermesAPI"]),

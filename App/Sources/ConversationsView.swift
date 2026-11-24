@@ -16,32 +16,38 @@ struct ConversationsView: View {
 
     var body: some View {
         NavigationSplitView {
-            ConversationListView(browser: browser, failure: $failure)
-                .navigationTitle("Conversations")
-                .toolbar {
-                    ToolbarItem(placement: .leadingAction) {
-                        Button("Settings", systemImage: "gearshape") {
-                            isShowingSettings = true
-                        }
+            NavigationStack {
+                ConversationListView(browser: browser, failure: $failure)
+                    .navigationTitle("Conversations")
+                    .navigationDestination(for: String.self) { projectID in
+                        ProjectSidebarView(
+                            browser: browser,
+                            projectID: projectID,
+                            startConversation: { startConversation(inProject: projectID) },
+                            failure: $failure
+                        )
                     }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
-                            .disabled(browser.isCreating)
+            }
+            .toolbar {
+                ToolbarItem(placement: .leadingAction) {
+                    Button("Settings", systemImage: "gearshape") {
+                        isShowingSettings = true
                     }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    // Always outside any project: a conversation in a project starts from its screen.
+                    Button("New conversation", systemImage: "square.and.pencil") {
+                        startConversation(inProject: nil)
+                    }
+                    .disabled(browser.isCreating)
+                }
+            }
         } detail: {
             Group {
                 if let transcript = browser.openedRemote {
                     ChatView(transcript: transcript)
                         // A new view per session: its draft and scroll position belong to one conversation.
                         .id(transcript.sessionID)
-                } else if let project = browser.openedProject {
-                    ContentUnavailableView {
-                        Label(project.name, systemImage: "folder")
-                    } description: {
-                        Text(project.conversationIDs.count == 1
-                            ? "1 conversation" : "\(project.conversationIDs.count) conversations")
-                    }
                 } else if browser.isCreating {
                     ProgressView("Starting the conversation…")
                 } else {
@@ -50,7 +56,9 @@ struct ConversationsView: View {
                     } description: {
                         Text("Pick a conversation in the list, or start a new one.")
                     } actions: {
-                        Button("New conversation", action: startConversation)
+                        Button("New conversation") {
+                            startConversation(inProject: nil)
+                        }
                     }
                 }
             }
@@ -69,18 +77,34 @@ struct ConversationsView: View {
         } message: { message in
             Text(message)
         }
+        .alert(
+            "Not added to the project",
+            isPresented: Binding(
+                get: { browser.projectNotice != nil },
+                set: { if !$0 { browser.dismissProjectNotice() } }
+            ),
+            presenting: browser.projectNotice
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { notice in
+            Text(notice)
+        }
     }
 
+    /// Whether a chat is pushed over the open project. Going back closes the chat, the project stays open.
     /// `nil` while a conversation is being created or the settings are shown: the menu item is disabled.
+    /// In the open project (its screen, or the chat of one of its conversations), the conversation is created
+    /// there; outside any project otherwise.
     private var newConversationAction: (@MainActor () -> Void)? {
         guard !browser.isCreating, !isShowingSettings else { return nil }
-        return { startConversation() }
+        let projectID = browser.openedProjectID
+        return { startConversation(inProject: projectID) }
     }
 
-    private func startConversation() {
+    private func startConversation(inProject projectID: String?) {
         Task {
             do {
-                try await browser.createConversation()
+                try await browser.createConversation(inProject: projectID)
             } catch {
                 failure = "The conversation could not be started. \(Self.reason(error))"
             }

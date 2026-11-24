@@ -40,6 +40,13 @@ jobs:
             --repo "${{ github.repository }}" \
             --remove-label preview-macos
       - uses: actions/checkout@v7
+      - name: Select Xcode 27.1
+        # The app targets iOS / macOS 27.1 (ArrangementView): pick an Xcode 27.1+ on the image if there is one.
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_27.[1-9]*.app /Applications/Xcode-27.[1-9]*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
       - uses: jdx/mise-action@v5
         with:
           install: true

@@ -25,7 +25,7 @@ HermesKit/          Local SPM package: business logic, testable without UI
 
 ## Requirements
 
-- Xcode 27 with the iOS 27 / macOS 27 SDKs.
+- Xcode 27.1 with the iOS 27.1 / macOS 27.1 SDKs.
 - Swift 6 (strict concurrency enabled).
 - No third-party dependencies in the app: Apple frameworks only.
 - [mise](https://mise.jdx.dev) to install the tooling (Tuist), version pinned in `mise.toml`.
