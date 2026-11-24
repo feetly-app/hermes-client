@@ -1,20 +1,19 @@
 name: Preview macOS
 
-# Builds the app for macOS and shares it as a Tuist Preview when
-# the `preview-macos` label is added to an open pull request. The build is ad hoc signed: no certificate is needed, but macOS asks again for
-# Keychain access after each new build. The label is removed as soon as the run starts: add it again to rebuild.
+# Builds the app for macOS and shares it as a Tuist Preview.
+# The build is ad hoc signed: no certificate is needed.
+# Can be run manually (workflow_dispatch) or triggered by the preview trigger workflow (workflow_call).
 on:
-  pull_request:
-    types: [labeled]
+  workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: preview-macos-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  group: preview-macos-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   id-token: write # Tuist OIDC authentication
-  pull-requests: write # Remove the preview label
 
 env:
   # Tuist server project, read by Tuist.swift. Update if the Tuist project uses a different handle.
@@ -23,23 +22,21 @@ env:
 jobs:
   preview:
     name: macOS preview
-    if: github.event.label.name == 'preview-macos' && github.event.pull_request.state == 'open'
     runs-on: xcode-27
     timeout-minutes: 45
     env:
       BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
-      # Tuist keys uploads on (binary ID, version). The simulator binary is a stub with a stable ID,
-      # so the marketing version must change per run as well, or the upload is rejected as a duplicate.
+      # Tuist keys uploads on (binary ID, version). The binary ID must change per run as well.
       MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}
     steps:
-      - name: Remove the preview-macos label
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --remove-label preview-macos
       - uses: actions/checkout@v7
+      - name: Select Xcode 27.0
+        # The app targets iOS / macOS 27.0 (ArrangementView): pick an Xcode 27.0+ on the image if there is one.
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_27*.app /Applications/Xcode-27*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
       - uses: jdx/mise-action@v5
         with:
           install: true
