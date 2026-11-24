@@ -19,38 +19,16 @@ struct ConversationsView: View {
             NavigationStack {
                 ConversationListView(browser: browser, failure: $failure)
                     .navigationTitle("Conversations")
-                    .toolbar {
-                        ToolbarItem(placement: .leadingAction) {
-                            Button("Settings", systemImage: "gearshape") {
-                                isShowingSettings = true
-                            }
-                        }
-                        ToolbarItem(placement: .primaryAction) {
-                            // Always outside any project: a conversation in a project starts from its screen.
-                            Button("New conversation", systemImage: "square.and.pencil") {
-                                startConversation(inProject: browser.openedProjectID)
-                            }
-                            .disabled(browser.isCreating)
-                        }
-                    }
-                    // Project destination pushed natively inside the sidebar stack!
-                    .navigationDestination(for: Project.self) { project in
-                        ProjectSidebarView(
-                            browser: browser,
-                            projectID: project.id,
-                            startConversation: { startConversation(inProject: project.id) },
-                            failure: $failure
-                        )
-                    }
-                    // Conversation destination pushed natively inside the sidebar stack (for collapsed widths)!
-                    .navigationDestination(for: SidebarItem.self) { item in
-                        if case .session(let sessionID) = item {
-                            if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
-                                ChatView(transcript: browser.transcript(for: session))
-                                    .id(sessionID)
-                            }
-                        }
-                    }
+                    .sidebarToolbar(
+                        isShowingSettings: $isShowingSettings,
+                        isCreating: browser.isCreating,
+                        startConversation: { startConversation(inProject: browser.openedProjectID) }
+                    )
+                    .projectNavigationDestinations(
+                        browser: browser,
+                        startConversation: { startConversation(inProject: $0) },
+                        failure: $failure
+                    )
             }
         } detail: {
             Group {
@@ -124,5 +102,49 @@ struct ConversationsView: View {
     /// The user-facing reason of an error thrown by the browser.
     static func reason(_ error: any Error) -> String {
         HermesAPIError.from(error).errorDescription ?? "The request failed."
+    }
+}
+
+extension View {
+    fileprivate func sidebarToolbar(
+        isShowingSettings: Binding<Bool>,
+        isCreating: Bool,
+        startConversation: @escaping () -> Void
+    ) -> some View {
+        self.toolbar {
+            ToolbarItem(placement: .leadingAction) {
+                Button("Settings", systemImage: "gearshape") {
+                    isShowingSettings.wrappedValue = true
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
+                    .disabled(isCreating)
+            }
+        }
+    }
+
+    fileprivate func projectNavigationDestinations(
+        browser: ConversationBrowser,
+        startConversation: @escaping (String) -> Void,
+        failure: Binding<String?>
+    ) -> some View {
+        self
+            .navigationDestination(for: String.self) { projectID in
+                ProjectSidebarView(
+                    browser: browser,
+                    projectID: projectID,
+                    startConversation: { startConversation(projectID) },
+                    failure: failure
+                )
+            }
+            .navigationDestination(for: SidebarItem.self) { item in
+                if case .session(let sessionID) = item {
+                    if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
+                        ChatView(transcript: browser.transcript(for: session))
+                            .id(sessionID)
+                    }
+                }
+            }
     }
 }
