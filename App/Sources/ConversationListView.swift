@@ -175,7 +175,7 @@ struct ConversationListView: View {
 
     /// One line: a folder and the project name.
     private func projectRow(_ project: Project) -> some View {
-        NavigationLink(value: project) {
+        NavigationLink(value: project.id) {
             Label {
                 Text(project.name)
             } icon: {
