@@ -138,13 +138,5 @@ extension View {
                     failure: failure
                 )
             }
-            .navigationDestination(for: SidebarItem.self) { item in
-                if case .session(let sessionID) = item {
-                    if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
-                        ChatView(transcript: browser.transcript(for: session))
-                            .id(sessionID)
-                    }
-                }
-            }
     }
 }
