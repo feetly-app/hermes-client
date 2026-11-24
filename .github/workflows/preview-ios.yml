@@ -56,13 +56,6 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v7
-      - name: Select Xcode 27.0
-        # The app targets iOS / macOS 27.0 (ArrangementView): pick an Xcode 27.0+ on the image if there is one.
-        run: |
-          ls -d /Applications/Xcode*.app
-          XCODE=$(ls -d /Applications/Xcode_27*.app /Applications/Xcode-27*.app 2>/dev/null | sort -V | tail -1 || true)
-          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
-          xcodebuild -version
       - uses: jdx/mise-action@v5
         with:
           install: true
@@ -172,13 +165,6 @@ jobs:
       MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v7
-      - name: Select Xcode 27.0
-        # The app targets iOS / macOS 27.0 (ArrangementView): pick an Xcode 27.0+ on the image if there is one.
-        run: |
-          ls -d /Applications/Xcode*.app
-          XCODE=$(ls -d /Applications/Xcode_27*.app /Applications/Xcode-27*.app 2>/dev/null | sort -V | tail -1 || true)
-          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
-          xcodebuild -version
       - uses: jdx/mise-action@v5
         with:
           install: true
