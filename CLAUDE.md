@@ -4,7 +4,7 @@ Instructions for Claude Code in this repository.
 
 ## Project
 
-Native SwiftUI client (iPhone, iPad and Mac; iOS 27.1 / macOS 27.1) for a self-hosted Hermes Agent instance (OpenAI-compatible API). Personal use only. The work plan lives in the GitHub milestones and issues (M0 to M6).
+Native SwiftUI client (iPhone, iPad and Mac; iOS 27.0 / macOS 27.0) for a self-hosted Hermes Agent instance (OpenAI-compatible API). Personal use only. The work plan lives in the GitHub milestones and issues (M0 to M6).
 
 ## Language
 

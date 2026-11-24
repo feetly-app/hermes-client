@@ -1,7 +1,7 @@
 import ProjectDescription
 
 let bundleIdPrefix = "dev.mtmcapital.hermes"
-let deploymentTargets: DeploymentTargets = .multiplatform(iOS: "27.1", macOS: "27.1")
+let deploymentTargets: DeploymentTargets = .multiplatform(iOS: "27.0", macOS: "27.0")
 
 /// Apple Developer team used for automatic code signing.
 let developmentTeam = "S4J5D3N22R"
