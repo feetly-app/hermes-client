@@ -25,8 +25,6 @@ struct ProjectSidebarView: View {
     @State private var isAddingRepository = false
     @State private var repositoryURL = ""
     @State private var deletingRepository: String?
-    
-    @Environment(\.dismiss) private var dismiss
 
     var project: Project? {
         browser.projects?.project(id: projectID)
@@ -41,6 +39,13 @@ struct ProjectSidebarView: View {
                 }
                 .navigationTitle(project.name)
                 .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Button {
+                            browser.select(nil)
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
                             .disabled(browser.isCreating)
@@ -88,7 +93,7 @@ struct ProjectSidebarView: View {
         // Sync project state
         .onChange(of: project) { _, newValue in
             if newValue == nil {
-                dismiss()
+                browser.select(nil)
             }
         }
         .task(id: project?.conversationIDs) {

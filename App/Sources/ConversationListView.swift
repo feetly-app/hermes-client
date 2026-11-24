@@ -299,7 +299,12 @@ struct ConversationListView: View {
     /// into a stack, and only the list selection pushes the detail: a row outside it never opens.
     private var selection: Binding<SidebarItem?> {
         Binding(
-            get: { browser.selection },
+            get: {
+                if case .project = browser.selection {
+                    return nil
+                }
+                return browser.selection
+            },
             set: { browser.select($0) }
         )
     }

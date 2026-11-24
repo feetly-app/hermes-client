@@ -13,34 +13,37 @@ struct ConversationsView: View {
     @State private var isShowingSettings = false
     /// Why the last action on a conversation failed, shown in an alert.
     @State private var failure: String?
-    @State private var sidebarPath: [String] = []
 
     var body: some View {
         NavigationSplitView {
-            NavigationStack(path: $sidebarPath) {
-                ConversationListView(browser: browser, failure: $failure)
-                    .navigationTitle("Conversations")
-                    .navigationDestination(for: String.self) { projectID in
-                        ProjectSidebarView(
-                            browser: browser,
-                            projectID: projectID,
-                            startConversation: { startConversation(inProject: projectID) },
-                            failure: $failure
-                        )
-                    }
-            }
-            .toolbar {
-                ToolbarItem(placement: .leadingAction) {
-                    Button("Settings", systemImage: "gearshape") {
-                        isShowingSettings = true
-                    }
+            Group {
+                if let projectID = browser.openedProjectID {
+                    ProjectSidebarView(
+                        browser: browser,
+                        projectID: projectID,
+                        startConversation: { startConversation(inProject: projectID) },
+                        failure: $failure
+                    )
+                } else {
+                    ConversationListView(browser: browser, failure: $failure)
+                        .navigationTitle("Conversations")
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    // Always outside any project: a conversation in a project starts from its screen.
-                    Button("New conversation", systemImage: "square.and.pencil") {
-                        startConversation(inProject: nil)
+            }
+            .animation(.default, value: browser.openedProjectID)
+            .toolbar {
+                if browser.openedProjectID == nil {
+                    ToolbarItem(placement: .leadingAction) {
+                        Button("Settings", systemImage: "gearshape") {
+                            isShowingSettings = true
+                        }
                     }
-                    .disabled(browser.isCreating)
+                    ToolbarItem(placement: .primaryAction) {
+                        // Always outside any project: a conversation in a project starts from its screen.
+                        Button("New conversation", systemImage: "square.and.pencil") {
+                            startConversation(inProject: nil)
+                        }
+                        .disabled(browser.isCreating)
+                    }
                 }
             }
         } detail: {
@@ -89,22 +92,6 @@ struct ConversationsView: View {
             Button("OK", role: .cancel) {}
         } message: { notice in
             Text(notice)
-        }
-        .onChange(of: browser.openedProjectID) { _, newValue in
-            if let newValue {
-                if sidebarPath.first != newValue {
-                    sidebarPath = [newValue]
-                }
-            } else {
-                sidebarPath = []
-            }
-        }
-        .onChange(of: sidebarPath) { _, newValue in
-            if newValue.isEmpty {
-                if browser.openedProjectID != nil {
-                    browser.select(nil)
-                }
-            }
         }
     }
 
