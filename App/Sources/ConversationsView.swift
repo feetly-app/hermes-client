@@ -13,10 +13,11 @@ struct ConversationsView: View {
     @State private var isShowingSettings = false
     /// Why the last action on a conversation failed, shown in an alert.
     @State private var failure: String?
+    @State private var sidebarPath: [String] = []
 
     var body: some View {
         NavigationSplitView {
-            NavigationStack {
+            NavigationStack(path: $sidebarPath) {
                 ConversationListView(browser: browser, failure: $failure)
                     .navigationTitle("Conversations")
                     .navigationDestination(for: String.self) { projectID in
@@ -88,6 +89,22 @@ struct ConversationsView: View {
             Button("OK", role: .cancel) {}
         } message: { notice in
             Text(notice)
+        }
+        .onChange(of: browser.openedProjectID) { _, newValue in
+            if let newValue {
+                if sidebarPath.first != newValue {
+                    sidebarPath = [newValue]
+                }
+            } else {
+                sidebarPath = []
+            }
+        }
+        .onChange(of: sidebarPath) { _, newValue in
+            if newValue.isEmpty {
+                if browser.openedProjectID != nil {
+                    browser.select(nil)
+                }
+            }
         }
     }
 

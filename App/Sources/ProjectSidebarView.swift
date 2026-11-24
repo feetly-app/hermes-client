@@ -35,7 +35,7 @@ struct ProjectSidebarView: View {
     var body: some View {
         Group {
             if let project {
-                List {
+                List(selection: selection) {
                     repositoriesSection(project)
                     conversationsSection(project)
                 }
@@ -89,6 +89,11 @@ struct ProjectSidebarView: View {
         .onChange(of: project) { _, newValue in
             if newValue == nil {
                 dismiss()
+            }
+        }
+        .task(id: project?.conversationIDs) {
+            if let project {
+                await browser.loadConversations(in: project)
             }
         }
     }
@@ -182,21 +187,13 @@ struct ProjectSidebarView: View {
                 }
             } else {
                 ForEach(sessions) { session in
-                    Button {
-                        browser.openRemote(session, inProject: project.id)
-                    } label: {
-                        Label {
-                            Text(session.displayTitle)
-                                .foregroundStyle(.primary)
-                        } icon: {
-                            Image(systemName: ConversationListView.icon(for: session.kind))
-                                .foregroundStyle(.primary)
-                        }
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(.rect)
+                    Label {
+                        Text(session.displayTitle)
+                    } icon: {
+                        Image(systemName: ConversationListView.icon(for: session.kind))
                     }
-                    .buttonStyle(.plain)
+                    .lineLimit(1)
+                    .tag(SidebarItem.session(session.id))
                     .modifier(RowActions(
                         onRename: {
                             draftTitle = session.title ?? ""
@@ -230,10 +227,6 @@ struct ProjectSidebarView: View {
             }
         } message: { _ in
             Text("It is deleted from your Hermes instance, with all its messages.")
-        }
-        // Force reloading of conversations of this project.
-        .task(id: project.conversationIDs) {
-            await browser.loadConversations(in: project)
         }
     }
 
@@ -309,5 +302,12 @@ struct ProjectSidebarView: View {
 
     private var isDeletingRepository: Binding<Bool> {
         Binding(get: { deletingRepository != nil }, set: { if !$0 { deletingRepository = nil } })
+    }
+
+    private var selection: Binding<SidebarItem?> {
+        Binding(
+            get: { browser.selection },
+            set: { browser.select($0) }
+        )
     }
 }

@@ -175,16 +175,15 @@ struct ConversationListView: View {
 
     /// One line: a folder and the project name.
     private func projectRow(_ project: Project) -> some View {
-        NavigationLink(value: project.id) {
-            Label {
-                Text(project.name)
-            } icon: {
-                Image(systemName: "folder")
-                    .foregroundStyle(.primary)
-            }
-            .lineLimit(1)
-            .listItemTint(.monochrome)
+        Label {
+            Text(project.name)
+        } icon: {
+            Image(systemName: "folder")
+                .foregroundStyle(.primary)
         }
+        .lineLimit(1)
+        .listItemTint(.monochrome)
+        .tag(SidebarItem.project(project.id))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: {
@@ -300,12 +299,7 @@ struct ConversationListView: View {
     /// into a stack, and only the list selection pushes the detail: a row outside it never opens.
     private var selection: Binding<SidebarItem?> {
         Binding(
-            get: {
-                if case .project = browser.selection {
-                    return nil
-                }
-                return browser.selection
-            },
+            get: { browser.selection },
             set: { browser.select($0) }
         )
     }
