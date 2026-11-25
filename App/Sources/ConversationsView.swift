@@ -2,7 +2,7 @@ import HermesAPI
 import HermesChat
 import SwiftUI
 
-/// Main screen: a split view with the conversation list and the open conversation.
+/// Main screen: a split view with the sidebar (projects and conversations) and the open conversation or project.
 /// A new conversation is a session created on the instance, on the model set in the connection settings.
 /// On compact widths the split view collapses into a navigation stack.
 struct ConversationsView: View {
@@ -35,6 +35,13 @@ struct ConversationsView: View {
                     ChatView(transcript: transcript)
                         // A new view per session: its draft and scroll position belong to one conversation.
                         .id(transcript.sessionID)
+                } else if let project = browser.openedProject {
+                    ContentUnavailableView {
+                        Label(project.name, systemImage: "folder")
+                    } description: {
+                        Text(project.conversationIDs.count == 1
+                            ? "1 conversation" : "\(project.conversationIDs.count) conversations")
+                    }
                 } else if browser.isCreating {
                     ProgressView("Starting the conversation…")
                 } else {
