@@ -43,6 +43,9 @@ public final class ConversationBrowser {
     public private(set) var openedProjectID: String?
     /// `true` while a new session is being created on the instance.
     public private(set) var isCreating = false
+    /// Why the last change of project membership failed, for an alert that does not block the chat. `nil` once
+    /// dismissed (`dismissProjectNotice()`).
+    public private(set) var projectNotice: String?
 
     /// The model new sessions are locked on.
     private let model: ModelChoice
@@ -75,16 +78,29 @@ public final class ConversationBrowser {
 
     /// Creates a session on the instance, on the configured model, and opens it.
     ///
+    /// With a `projectID`, the session is put in that project before it opens, and opens over the project
+    /// screen. If that fails, it still opens, outside any project (it is in Recents), and `projectNotice` says
+    /// why. Without one, it opens outside any project and the open project closes.
+    ///
     /// The instance default model is not sent: the instance picks its configured model.
     @discardableResult
-    public func createConversation() async throws -> RemoteSession {
+    public func createConversation(inProject projectID: String? = nil) async throws -> RemoteSession {
         let lock = model == ModelChoice.instanceDefault ? nil : model
         isCreating = true
         defer { isCreating = false }
         let session = try await remoteSessions.create(model: lock)
         unsentSessionIDs.insert(session.id)
+        var keptProjectID: String?
+        if let projectID, let projects {
+            do {
+                try await projects.attach(session.id, to: projectID)
+                keptProjectID = projectID
+            } catch {
+                projectNotice = "The conversation could not be added to the project. \(Self.reason(error))"
+            }
+        }
         closeOpened()
-        openedProjectID = nil
+        openedProjectID = keptProjectID
         let transcript = remoteSessions.transcript(for: session, model: model)
         transcript.markEmpty()
         watch(transcript)
@@ -94,8 +110,11 @@ public final class ConversationBrowser {
 
     /// Opens a session. Selecting the open one again keeps its transcript, including a reply in progress.
     /// A session left while its reply was streaming opens on the same transcript, with the reply still arriving.
-    public func openRemote(_ session: RemoteSession) {
-        openedProjectID = nil
+    ///
+    /// With a `projectID`, the conversation opens over that project's screen, which stays selected in the
+    /// sidebar. Without one, the open project closes.
+    public func openRemote(_ session: RemoteSession, inProject projectID: String? = nil) {
+        openedProjectID = projectID.flatMap { projects?.project(id: $0) != nil ? $0 : nil }
         // After a fork the sidebar row carries the fork's id, which is the transcript's active session.
         if let openedRemote, openedRemote.sessionID == session.id || openedRemote.activeSessionID == session.id {
             return
@@ -151,6 +170,27 @@ public final class ConversationBrowser {
         openedProjectID = projectID
     }
 
+    /// Closes the open conversation and keeps the open project: back from a chat to its project screen.
+    public func closeConversation() {
+        closeOpened()
+    }
+
+    /// Clears `projectNotice` once the alert is dismissed.
+    public func dismissProjectNotice() {
+        projectNotice = nil
+    }
+
+    /// The conversations of a project, most recent activity first. Those not fetched yet are missing until
+    /// `loadConversations(in:)` ends; orphans (gone from the instance) are left out.
+    public func conversations(in project: Project) -> [RemoteSession] {
+        remoteSessions.sessions(withIDs: project.conversationIDs)
+    }
+
+    /// Fetches by id the conversations of a project the loaded pages do not hold.
+    public func loadConversations(in project: Project) async {
+        await remoteSessions.fetchMissing(project.conversationIDs)
+    }
+
     /// Opens the session with this id from the list, or closes the open one with `nil`. An id missing
     /// from the list is ignored.
     public func selectSession(_ sessionID: String?) {
@@ -198,6 +238,19 @@ public final class ConversationBrowser {
         try await projects.delete(projectID)
     }
 
+    /// Attaches a repository to a project on the sidecar. Throws `ProjectError`.
+    @discardableResult
+    public func attachRepository(url: String, to projectID: String) async throws -> ProjectRepository {
+        guard let projects else { throw ProjectError.projectNotFound }
+        return try await projects.attachRepository(url: url, to: projectID)
+    }
+
+    /// Detaches a repository from a project on the sidecar. Throws `ProjectError`.
+    public func detachRepository(_ repositoryID: String, from projectID: String) async throws {
+        guard let projects else { throw ProjectError.projectNotFound }
+        try await projects.detachRepository(repositoryID, from: projectID)
+    }
+
     /// Renames a session on the instance. A blank title is ignored.
     public func renameSession(_ sessionID: String, to title: String) async throws {
         try await remoteSessions.rename(sessionID, to: title)
@@ -220,6 +273,7 @@ public final class ConversationBrowser {
         if isOpen {
             openedRemote = nil
         }
+        await detachFromProject(sessionID)
     }
 
     // MARK: Private
@@ -236,17 +290,54 @@ public final class ConversationBrowser {
         }
         let sessionID = transcript.activeSessionID
         guard unsentSessionIDs.remove(sessionID) != nil, !transcript.hasSent else { return }
-        Task { try? await remoteSessions.delete(sessionID) }
+        Task {
+            guard (try? await remoteSessions.delete(sessionID)) != nil else { return }
+            await detachFromProject(sessionID)
+        }
+    }
+
+    /// Takes a session deleted on the instance out of its project, so the project no longer names it. Best
+    /// effort and silent: a project that still names it shows nothing for it, the instance answers `404`.
+    private func detachFromProject(_ sessionID: String) async {
+        guard let projects, let project = projects.project(containing: sessionID) else { return }
+        try? await projects.detach(sessionID, from: project.id)
+    }
+
+    /// The sidecar knows conversations by session id only. When a session created elsewhere is forked to take
+    /// a message, the fork goes in the original's project and the original leaves it. The message is sent
+    /// whatever happens; a failed attach only sets `projectNotice`, a failed detach is ignored.
+    private func carryProjectMembership(from originalID: String, to forkID: String) {
+        guard let projects, let project = projects.project(containing: originalID) else { return }
+        Task {
+            do {
+                try await projects.attach(forkID, to: project.id)
+            } catch {
+                projectNotice = "The conversation continues outside “\(project.name)”: it could not be kept in the "
+                    + "project. \(Self.reason(error))"
+                return
+            }
+            try? await projects.detach(originalID, from: project.id)
+        }
     }
 
     /// Follows a reply: once it ends, the session is no longer unsent, and the list is reloaded so that the
     /// row moves up and shows the title the instance may have given it.
     private func watch(_ transcript: RemoteTranscript) {
+        let onFork = transcript.onFork
+        let originalID = transcript.sessionID
+        transcript.onFork = { [weak self] fork in
+            onFork?(fork)
+            self?.carryProjectMembership(from: originalID, to: fork.id)
+        }
         transcript.onReplyEnded = { [weak self, weak transcript] in
             guard let self, let transcript else { return }
             unsentSessionIDs.remove(transcript.activeSessionID)
             Task { await self.reloadSessions() }
         }
+    }
+
+    private static func reason(_ error: any Error) -> String {
+        ProjectError.from(error).errorDescription ?? "The request failed."
     }
 
     private func reloadProjects() async {

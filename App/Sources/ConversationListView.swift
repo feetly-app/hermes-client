@@ -32,7 +32,7 @@ struct ConversationListView: View {
     @State private var deletingProject: String?
 
     var body: some View {
-        List(selection: selection) {
+        List {
             if let projects = browser.projects, !isSearching || !matchingProjects.isEmpty {
                 Section {
                     ForEach(matchingProjects) { project in
@@ -175,15 +175,16 @@ struct ConversationListView: View {
 
     /// One line: a folder and the project name.
     private func projectRow(_ project: Project) -> some View {
-        Label {
-            Text(project.name)
-        } icon: {
-            Image(systemName: "folder")
-                .foregroundStyle(.primary)
+        NavigationLink(value: project.id) {
+            Label {
+                Text(project.name)
+            } icon: {
+                Image(systemName: "folder")
+                    .foregroundStyle(.primary)
+            }
+            .lineLimit(1)
+            .listItemTint(.monochrome)
         }
-        .lineLimit(1)
-        .listItemTint(.monochrome)
-        .tag(SidebarItem.project(project.id))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: {
@@ -198,15 +199,16 @@ struct ConversationListView: View {
     /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
     /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
-        Label {
-            Text(session.displayTitle)
-        } icon: {
-            Image(systemName: Self.icon(for: session.kind))
-                .foregroundStyle(.primary)
+        NavigationLink(value: SidebarItem.session(session.id)) {
+            Label {
+                Text(session.displayTitle)
+            } icon: {
+                Image(systemName: Self.icon(for: session.kind))
+                    .foregroundStyle(.primary)
+            }
+            .lineLimit(1)
+            .listItemTint(.monochrome)
         }
-        .lineLimit(1)
-        .listItemTint(.monochrome)
-        .tag(SidebarItem.session(session.id))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },
@@ -222,7 +224,7 @@ struct ConversationListView: View {
         #endif
     }
 
-    private static func icon(for kind: SessionKind) -> String {
+    static func icon(for kind: SessionKind) -> String {
         switch kind {
         case .chat: "bubble.left"
         case .scheduled: "clock"
@@ -295,15 +297,6 @@ struct ConversationListView: View {
         ProjectError.from(error).errorDescription ?? "The request failed."
     }
 
-    /// One selection for every row, projects and conversations. On compact widths the split view collapses
-    /// into a stack, and only the list selection pushes the detail: a row outside it never opens.
-    private var selection: Binding<SidebarItem?> {
-        Binding(
-            get: { browser.selection },
-            set: { browser.select($0) }
-        )
-    }
-
     private var isRenaming: Binding<Bool> {
         Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })
     }
@@ -370,7 +363,7 @@ extension View {
 }
 
 /// Rename and delete, in the context menu and as trailing swipe actions.
-private struct RowActions: ViewModifier {
+struct RowActions: ViewModifier {
     let onRename: () -> Void
     let onDelete: () -> Void
 

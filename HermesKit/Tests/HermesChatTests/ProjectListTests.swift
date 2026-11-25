@@ -167,6 +167,8 @@ private struct FailingStore: ProjectStoring {
     func deleteProject(projectID: String) async throws { throw HermesAPIError.timeout }
     func attachConversation(conversationID: String, projectID: String) async throws { throw HermesAPIError.timeout }
     func detachConversation(conversationID: String, projectID: String) async throws { throw HermesAPIError.timeout }
+    func attachRepository(url: String, projectID: String) async throws -> ProjectRepository { throw HermesAPIError.timeout }
+    func detachRepository(repositoryID: String, projectID: String) async throws { throw HermesAPIError.timeout }
 }
 
 @Suite("Sidecar client from the settings")

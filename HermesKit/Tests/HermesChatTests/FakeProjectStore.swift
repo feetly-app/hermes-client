@@ -13,6 +13,8 @@ actor FakeProjectStore: ProjectStoring {
         case delete(String)
         case attach(conversation: String, project: String)
         case detach(conversation: String, project: String)
+        case attachRepository(url: String, project: String)
+        case detachRepository(repository: String, project: String)
     }
 
     private(set) var projects: [Project]
@@ -77,6 +79,29 @@ actor FakeProjectStore: ProjectStoring {
         try check("detach")
         guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw ProjectError.projectNotFound }
         projects[index] = projects[index].with(conversationIDs: projects[index].conversationIDs.filter { $0 != conversationID })
+    }
+
+    func attachRepository(url: String, projectID: String) async throws -> ProjectRepository {
+        calls.append(.attachRepository(url: url, project: projectID))
+        try check("attachRepository")
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw ProjectError.projectNotFound }
+        let name = url.components(separatedBy: "/").suffix(2).joined(separator: "/")
+        let repo = ProjectRepository(id: "repo-\(nextID)", name: name, url: url)
+        nextID += 1
+        var repos = projects[index].repositories
+        repos.append(repo)
+        projects[index] = Project(id: projects[index].id, name: projects[index].name, repositories: repos, conversationIDs: projects[index].conversationIDs)
+        return repo
+    }
+
+    func detachRepository(repositoryID: String, projectID: String) async throws {
+        calls.append(.detachRepository(repository: repositoryID, project: projectID))
+        try check("detachRepository")
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw ProjectError.projectNotFound }
+        var repos = projects[index].repositories
+        guard repos.contains(where: { $0.id == repositoryID }) else { throw ProjectError.repositoryNotFound }
+        repos.removeAll { $0.id == repositoryID }
+        projects[index] = Project(id: projects[index].id, name: projects[index].name, repositories: repos, conversationIDs: projects[index].conversationIDs)
     }
 
     private func check(_ kind: String) throws {

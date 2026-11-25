@@ -295,12 +295,59 @@ struct SidecarProjectsTests {
         #expect(ProjectsURLProtocol.requests.isEmpty)
     }
 
+    @Test("attaching a repository is a POST to {sidecar}/projects/{id}/repositories with the URL as JSON")
+    func attachRepository() async throws {
+        let repoJSON = #"{"id":"repo-123","name":"owner/name","url":"https://github.com/owner/name"}"#
+        ProjectsURLProtocol.responder = { _ in ProjectsReply(status: 201, body: Data(repoJSON.utf8)) }
+
+        let repo = try await makeSidecar().attachRepository(url: "https://github.com/owner/name", projectID: Self.projectID)
+        #expect(repo == ProjectRepository(id: "repo-123", name: "owner/name", url: "https://github.com/owner/name"))
+
+        let request = try onlyRequest()
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path() == "/sidecar/projects/\(Self.projectID)/repositories")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(try bodyJSON() == ["url": "https://github.com/owner/name"])
+    }
+
+    @Test("detaching a repository is a DELETE to {sidecar}/projects/{id}/repositories/{repo_id}")
+    func detachRepository() async throws {
+        ProjectsURLProtocol.responder = { _ in ProjectsReply(status: 204) }
+
+        try await makeSidecar().detachRepository(repositoryID: "repo-123", projectID: Self.projectID)
+
+        let request = try onlyRequest()
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path() == "/sidecar/projects/\(Self.projectID)/repositories/repo-123")
+    }
+
+    @Test("repository error codes are mapped to specific project errors")
+    func repositoryErrors() async {
+        ProjectsURLProtocol.responder = { _ in ProjectsReply(status: 409, body: Self.errorBody("repository_already_attached")) }
+        await #expect(throws: ProjectError.repositoryAlreadyAttached) {
+            try await makeSidecar().attachRepository(url: "x", projectID: Self.projectID)
+        }
+
+        ProjectsURLProtocol.responder = { _ in ProjectsReply(status: 422, body: Self.errorBody("invalid_repository_url", "the host is missing")) }
+        await #expect(throws: ProjectError.invalidRepositoryURL("the host is missing")) {
+            try await makeSidecar().attachRepository(url: "x", projectID: Self.projectID)
+        }
+
+        ProjectsURLProtocol.responder = { _ in ProjectsReply(status: 404, body: Self.errorBody("repository_not_found")) }
+        await #expect(throws: ProjectError.repositoryNotFound) {
+            try await makeSidecar().detachRepository(repositoryID: "x", projectID: Self.projectID)
+        }
+    }
+
     @Test("project errors have a message for the UI")
     func messages() {
         #expect(ProjectError.nameTaken.errorDescription == "A project with this name already exists.")
         #expect(
             ProjectError.invalidName("the name must not be empty").errorDescription
                 == "This name cannot be used: the name must not be empty.")
+        #expect(ProjectError.repositoryAlreadyAttached.errorDescription == "This repository is already attached to this project.")
+        #expect(ProjectError.invalidRepositoryURL("the host is missing").errorDescription == "This repository URL is not supported: the host is missing.")
+        #expect(ProjectError.repositoryNotFound.errorDescription == "This repository is not in this project.")
         #expect(ProjectError.api(.unauthorized).errorDescription == HermesAPIError.unauthorized.errorDescription)
         #expect(ProjectError.api(.notFound).errorDescription?.contains("sidecar") == true)
     }
