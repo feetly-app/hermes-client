@@ -1,0 +1,22 @@
+[
+  {
+    "id": "0b7e8f5c-3a3e-4f0e-9a8e-3f1c2d4b5a69",
+    "name": "Hermes",
+    "repositories": [
+      {
+        "id": "5d1c7a2e-9b0f-4c3d-8e6a-1f2b3c4d5e6f",
+        "name": "owner/hermes-client",
+        "url": "https://git.example.test/owner/hermes-client",
+        "added_at": 1795157400
+      }
+    ],
+    "conversation_ids": ["20261120_093000_a1b2c3", "20261119_180000_d4e5f6"],
+    "color": "blue"
+  },
+  {
+    "id": "7c2d9e4f-1a2b-4c3d-9e8f-0a1b2c3d4e5f",
+    "name": "personal",
+    "repositories": [],
+    "conversation_ids": []
+  }
+]
