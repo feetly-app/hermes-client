@@ -33,7 +33,7 @@ struct ProjectSidebarView: View {
     var body: some View {
         Group {
             if let project {
-                List {
+                List(selection: selection) {
                     repositoriesSection(project)
                     conversationsSection(project)
                 }
@@ -301,5 +301,12 @@ struct ProjectSidebarView: View {
 
     private var isDeletingRepository: Binding<Bool> {
         Binding(get: { deletingRepository != nil }, set: { if !$0 { deletingRepository = nil } })
+     }
+
+    private var selection: Binding<SidebarItem?> {
+        Binding(
+            get: { browser.selection },
+            set: { browser.select($0) }
+        )
     }
 }

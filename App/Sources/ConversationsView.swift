@@ -2,7 +2,9 @@ import HermesAPI
 import HermesChat
 import SwiftUI
 
-/// Main screen: a single global NavigationStack (simplest, robust multiplatform native pattern).
+/// Main screen: adaptive navigation.
+/// - On compact widths (iPhone): uses a classic, robust single-column NavigationStack.
+/// - On regular widths (iPad, Mac): uses a native, professional Two-Column NavigationSplitView.
 struct ConversationsView: View {
     let browser: ConversationBrowser
     /// Edited by the settings sheet.
@@ -11,21 +13,16 @@ struct ConversationsView: View {
     @State private var isShowingSettings = false
     /// Why the last action on a conversation failed, shown in an alert.
     @State private var failure: String?
+    
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
-        NavigationStack {
-            ConversationListView(browser: browser, failure: $failure)
-                .navigationTitle("Conversations")
-                .sidebarToolbar(
-                    isShowingSettings: $isShowingSettings,
-                    isCreating: browser.isCreating,
-                    startConversation: { startConversation(inProject: browser.openedProjectID) }
-                )
-                .projectNavigationDestinations(
-                    browser: browser,
-                    startConversation: { startConversation(inProject: $0) },
-                    failure: $failure
-                )
+        Group {
+            if sizeClass == .compact {
+                iphoneBody
+            } else {
+                macPadBody
+            }
         }
         // ⌘N in the menu bar, see `NewConversationCommand`.
         .focusedSceneValue(\.newConversation, newConversationAction)
@@ -52,6 +49,61 @@ struct ConversationsView: View {
             Button("OK", role: .cancel) {}
         } message: { notice in
             Text(notice)
+        }
+    }
+
+    private var iphoneBody: some View {
+        NavigationStack {
+            ConversationListView(browser: browser, failure: $failure)
+                .navigationTitle("Conversations")
+                .sidebarToolbar(
+                    isShowingSettings: $isShowingSettings,
+                    isCreating: browser.isCreating,
+                    startConversation: { startConversation(inProject: browser.openedProjectID) }
+                )
+                .projectNavigationDestinations(
+                    browser: browser,
+                    startConversation: { startConversation(inProject: $0) },
+                    failure: $failure
+                )
+        }
+    }
+
+    private var macPadBody: some View {
+        NavigationSplitView {
+            NavigationStack {
+                ConversationListView(browser: browser, failure: $failure)
+                    .navigationTitle("Conversations")
+                    .sidebarToolbar(
+                        isShowingSettings: $isShowingSettings,
+                        isCreating: browser.isCreating,
+                        startConversation: { startConversation(inProject: browser.openedProjectID) }
+                    )
+                    .projectNavigationDestinations(
+                        browser: browser,
+                        startConversation: { startConversation(inProject: $0) },
+                        failure: $failure
+                    )
+            }
+        } detail: {
+            Group {
+                if let transcript = browser.openedRemote {
+                    ChatView(transcript: transcript)
+                        .id(transcript.sessionID)
+                } else if browser.isCreating {
+                    ProgressView("Starting the conversation…")
+                } else {
+                    ContentUnavailableView {
+                        Label("No conversation open", systemImage: "bubble.left.and.bubble.right")
+                    } description: {
+                        Text("Pick a conversation in the list, or start a new one.")
+                    } actions: {
+                        Button("New conversation") {
+                            startConversation(inProject: nil)
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -32,7 +32,7 @@ struct ConversationListView: View {
     @State private var deletingProject: String?
 
     var body: some View {
-        List {
+        List(selection: selection) {
             if let projects = browser.projects, !isSearching || !matchingProjects.isEmpty {
                 Section {
                     ForEach(matchingProjects) { project in
@@ -295,6 +295,18 @@ struct ConversationListView: View {
     /// The user-facing reason of a project error.
     static func reason(_ error: any Error) -> String {
         ProjectError.from(error).errorDescription ?? "The request failed."
+    }
+
+    private var selection: Binding<SidebarItem?> {
+        Binding(
+            get: {
+                if case .project = browser.selection {
+                    return nil
+                }
+                return browser.selection
+            },
+            set: { browser.select($0) }
+        )
     }
 
     private var isRenaming: Binding<Bool> {
