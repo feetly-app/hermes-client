@@ -61,11 +61,31 @@ struct ConversationsView: View {
                     isCreating: browser.isCreating,
                     startConversation: { startConversation(inProject: browser.openedProjectID) }
                 )
-                .projectNavigationDestinations(
-                    browser: browser,
-                    startConversation: { startConversation(inProject: $0) },
-                    failure: $failure
-                )
+                // On iPhone, push both Projects (String) and Conversations (SidebarItem) on the stack
+                .navigationDestination(for: String.self) { projectID in
+                    ProjectSidebarView(
+                        browser: browser,
+                        projectID: projectID,
+                        startConversation: { startConversation(inProject: projectID) },
+                        failure: $failure
+                    )
+                }
+                .navigationDestination(for: SidebarItem.self) { item in
+                    if case .session(let sessionID) = item {
+                        if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
+                            ChatView(transcript: browser.remoteSessions.transcript(for: session))
+                                .id(sessionID)
+                                .onAppear {
+                                    browser.openRemote(session)
+                                }
+                                .onDisappear {
+                                    if browser.openedRemote?.sessionID == sessionID {
+                                        browser.closeConversation()
+                                    }
+                                }
+                        }
+                    }
+                }
         }
     }
 
@@ -79,11 +99,16 @@ struct ConversationsView: View {
                         isCreating: browser.isCreating,
                         startConversation: { startConversation(inProject: browser.openedProjectID) }
                     )
-                    .projectNavigationDestinations(
-                        browser: browser,
-                        startConversation: { startConversation(inProject: $0) },
-                        failure: $failure
-                    )
+                    // On Mac/iPad, ONLY push Projects (String) inside the sidebar NavigationStack!
+                    // Do NOT declare SidebarItem.self here so it updates the detail pane instead of pushing!
+                    .navigationDestination(for: String.self) { projectID in
+                        ProjectSidebarView(
+                            browser: browser,
+                            projectID: projectID,
+                            startConversation: { startConversation(inProject: projectID) },
+                            failure: $failure
+                        )
+                    }
             }
         } detail: {
             Group {
@@ -150,32 +175,5 @@ extension View {
                     .disabled(isCreating)
             }
         }
-    }
-
-    fileprivate func projectNavigationDestinations(
-        browser: ConversationBrowser,
-        startConversation: @escaping (String) -> Void,
-        failure: Binding<String?>
-    ) -> some View {
-        self
-            .navigationDestination(for: String.self) { projectID in
-                ProjectSidebarView(
-                    browser: browser,
-                    projectID: projectID,
-                    startConversation: { startConversation(projectID) },
-                    failure: failure
-                )
-            }
-            .navigationDestination(for: SidebarItem.self) { item in
-                if case .session(let sessionID) = item {
-                    if let session = browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
-                        ChatView(transcript: browser.remoteSessions.transcript(for: session))
-                            .id(sessionID)
-                            .onAppear {
-                                browser.openRemote(session)
-                            }
-                    }
-                }
-            }
     }
 }
