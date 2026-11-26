@@ -177,3 +177,19 @@ extension View {
         }
     }
 }
+
+struct NavigationLinkIfCompactModifier<Value: Hashable>: ViewModifier {
+    let value: Value
+    let isCompact: Bool
+
+    func body(content: Content) -> some View {
+        if isCompact {
+            NavigationLink(value: value) {
+                content
+            }
+        } else {
+            content
+                .contentShape(Rectangle())
+        }
+    }
+}

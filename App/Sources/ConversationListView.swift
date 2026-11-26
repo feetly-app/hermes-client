@@ -31,6 +31,8 @@ struct ConversationListView: View {
     /// The id of the project waiting for the delete confirmation.
     @State private var deletingProject: String?
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
     var body: some View {
         List(selection: selection) {
             if let projects = browser.projects, !isSearching || !matchingProjects.isEmpty {
@@ -199,16 +201,15 @@ struct ConversationListView: View {
     /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
     /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
-        NavigationLink(value: SidebarItem.session(session.id)) {
-            Label {
-                Text(session.displayTitle)
-            } icon: {
-                Image(systemName: Self.icon(for: session.kind))
-                    .foregroundStyle(.primary)
-            }
-            .lineLimit(1)
-            .listItemTint(.monochrome)
+        Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: Self.icon(for: session.kind))
+                .foregroundStyle(.primary)
         }
+        .lineLimit(1)
+        .listItemTint(.monochrome)
+        .modifier(NavigationLinkIfCompactModifier(value: SidebarItem.session(session.id), isCompact: sizeClass == .compact))
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },

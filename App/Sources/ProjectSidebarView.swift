@@ -26,6 +26,8 @@ struct ProjectSidebarView: View {
     @State private var repositoryURL = ""
     @State private var deletingRepository: String?
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
     var project: Project? {
         browser.projects?.project(id: projectID)
     }
@@ -185,14 +187,13 @@ struct ProjectSidebarView: View {
                 }
             } else {
                 ForEach(sessions) { session in
-                    NavigationLink(value: SidebarItem.session(session.id)) {
-                        Label {
-                            Text(session.displayTitle)
-                        } icon: {
-                            Image(systemName: ConversationListView.icon(for: session.kind))
-                        }
+                    Label {
+                        Text(session.displayTitle)
+                    } icon: {
+                        Image(systemName: ConversationListView.icon(for: session.kind))
                     }
                     .lineLimit(1)
+                    .modifier(NavigationLinkIfCompactModifier(value: SidebarItem.session(session.id), isCompact: sizeClass == .compact))
                     .modifier(RowActions(
                         onRename: {
                             draftTitle = session.title ?? ""
