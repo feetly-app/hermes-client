@@ -21,6 +21,11 @@ final class AppState {
     ) {
         self.settingsStorage = settingsStorage
         self.secrets = secrets
+        #if DEBUG
+        if (try? secrets.read(account: Self.apiKeyAccount)) == nil {
+            try? secrets.write("mock-api-key", account: Self.apiKeyAccount)
+        }
+        #endif
         settings = settingsStorage.load()
         Self.removeLegacySentImages()
         rebuildBrowser()
