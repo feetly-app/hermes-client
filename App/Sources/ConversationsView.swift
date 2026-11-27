@@ -37,6 +37,12 @@ struct ConversationsView: View {
                 macPadBody
             }
         }
+        .task(id: ObjectIdentifier(browser)) {
+            await browser.reloadSessions()
+        }
+        .refreshable {
+            await browser.reloadSessions()
+        }
         // ⌘N in the menu bar, see `NewConversationCommand`.
         .focusedSceneValue(\.newConversation, newConversationAction)
         .sheet(isPresented: $isShowingSettings) {
@@ -148,12 +154,6 @@ struct ConversationsView: View {
                     }
                 }
             }
-        }
-        .task(id: ObjectIdentifier(browser)) {
-            await browser.reloadSessions()
-        }
-        .refreshable {
-            await browser.reloadSessions()
         }
         .onAppear {
             if let projectID = browser.openedProjectID, sidebarPath.isEmpty {

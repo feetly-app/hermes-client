@@ -67,10 +67,6 @@ struct ConversationListView: View {
                 ContentUnavailableView.search(text: query)
             }
         }
-        // Again for a new browser, after the connection settings changed: projects and sessions come from it.
-        .task(id: ObjectIdentifier(browser)) {
-            await browser.reloadSessions()
-        }
         .refreshable {
             await browser.reloadSessions()
         }
