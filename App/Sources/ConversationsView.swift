@@ -128,10 +128,16 @@ struct ConversationsView: View {
     private var macPadBody: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             splitSidebarColumn
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } content: {
             splitContentColumn
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {
             splitDetailColumn
+        }
+        .navigationSplitViewStyle(.balanced)
+        .onAppear {
+            columnVisibility = .all
         }
         .task(id: ObjectIdentifier(browser)) {
             await browser.reloadSessions()
