@@ -26,8 +26,6 @@ struct ProjectSidebarView: View {
     @State private var repositoryURL = ""
     @State private var deletingRepository: String?
 
-    @Environment(\.horizontalSizeClass) private var sizeClass
-
     var project: Project? {
         browser.projects?.project(id: projectID)
     }
@@ -35,7 +33,7 @@ struct ProjectSidebarView: View {
     var body: some View {
         Group {
             if let project {
-                List(selection: selection) {
+                List {
                     repositoriesSection(project)
                     conversationsSection(project)
                 }
@@ -187,13 +185,14 @@ struct ProjectSidebarView: View {
                 }
             } else {
                 ForEach(sessions) { session in
-                    Label {
-                        Text(session.displayTitle)
-                    } icon: {
-                        Image(systemName: ConversationListView.icon(for: session.kind))
+                    NavigationLink(value: SidebarItem.session(session.id)) {
+                        Label {
+                            Text(session.displayTitle)
+                        } icon: {
+                            Image(systemName: ConversationListView.icon(for: session.kind))
+                        }
                     }
                     .lineLimit(1)
-                    .modifier(NavigationLinkIfCompactModifier(value: SidebarItem.session(session.id), isCompact: sizeClass == .compact))
                     .modifier(RowActions(
                         onRename: {
                             draftTitle = session.title ?? ""
@@ -303,11 +302,4 @@ struct ProjectSidebarView: View {
     private var isDeletingRepository: Binding<Bool> {
         Binding(get: { deletingRepository != nil }, set: { if !$0 { deletingRepository = nil } })
      }
-
-    private var selection: Binding<SidebarItem?> {
-        Binding(
-            get: { browser.selection },
-            set: { browser.select($0) }
-        )
-    }
 }
