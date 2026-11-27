@@ -12,6 +12,8 @@ struct ConversationListView: View {
     let browser: ConversationBrowser
     /// Set to the reason when a rename or a delete fails.
     @Binding var failure: String?
+    /// When provided (Mac / iPad split view), tapping a conversation selects it instead of pushing.
+    var onSelectSession: ((RemoteSession) -> Void)? = nil
 
     /// The id of the session being renamed, and the title being typed.
     @State private var renaming: String?
@@ -199,21 +201,43 @@ struct ConversationListView: View {
     /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
     /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
-        NavigationLink(value: SidebarItem.session(session.id)) {
-            Label {
-                Text(session.displayTitle)
-            } icon: {
-                Image(systemName: Self.icon(for: session.kind))
-                    .foregroundStyle(.primary)
+        Group {
+            if let onSelectSession {
+                Button {
+                    onSelectSession(session)
+                } label: {
+                    rowContent(session)
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: SidebarItem.session(session.id)) {
+                    rowContent(session)
+                }
             }
-            .lineLimit(1)
-            .listItemTint(.monochrome)
         }
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },
             onDelete: { deleting = session.id }
         ))
+    }
+
+    private func rowContent(_ session: RemoteSession) -> some View {
+        let isSelected = browser.selectedSessionID == session.id
+        return Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: Self.icon(for: session.kind))
+                .foregroundStyle(.primary)
+        }
+        .lineLimit(1)
+        .listItemTint(.monochrome)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(
+            isSelected && onSelectSession != nil ? Color.accentColor.opacity(0.15) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6)
+        )
     }
 
     private static var searchPlacement: SearchFieldPlacement {

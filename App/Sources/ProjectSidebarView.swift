@@ -13,6 +13,8 @@ struct ProjectSidebarView: View {
     let startConversation: () -> Void
     /// Set to the reason when an action fails.
     @Binding var failure: String?
+    /// When provided (Mac / iPad split view), tapping a conversation selects it instead of pushing.
+    var onSelectSession: ((RemoteSession) -> Void)? = nil
 
     /// The id of the session being renamed, and the title being typed.
     @State private var renaming: String?
@@ -185,11 +187,18 @@ struct ProjectSidebarView: View {
                 }
             } else {
                 ForEach(sessions) { session in
-                    NavigationLink(value: SidebarItem.session(session.id)) {
-                        Label {
-                            Text(session.displayTitle)
-                        } icon: {
-                            Image(systemName: ConversationListView.icon(for: session.kind))
+                    Group {
+                        if let onSelectSession {
+                            Button {
+                                onSelectSession(session)
+                            } label: {
+                                projectRowContent(session)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            NavigationLink(value: SidebarItem.session(session.id)) {
+                                projectRowContent(session)
+                            }
                         }
                     }
                     .lineLimit(1)
@@ -227,6 +236,22 @@ struct ProjectSidebarView: View {
         } message: { _ in
             Text("It is deleted from your Hermes instance, with all its messages.")
         }
+    }
+
+    private func projectRowContent(_ session: RemoteSession) -> some View {
+        let isSelected = browser.selectedSessionID == session.id
+        return Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: ConversationListView.icon(for: session.kind))
+        }
+        .lineLimit(1)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(
+            isSelected && onSelectSession != nil ? Color.accentColor.opacity(0.15) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6)
+        )
     }
 
     // MARK: Actions
