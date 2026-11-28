@@ -51,21 +51,33 @@ public struct HermesClient: Sendable {
     public func streamSessionChat(
         sessionID: String, message: String, images: [ImageAttachment] = []
     ) -> AsyncThrowingStream<SessionChatEvent, any Error> {
-        AsyncThrowingStream { continuation in
+        streamEvents {
+            // The id goes into the path as is: it must be a single segment.
+            try Self.checkPathSegment(sessionID)
+            var request = makeRequest(
+                method: "POST",
+                path: HermesAPIPaths.sessionChatStream(sessionID),
+                accept: "text/event-stream"
+            )
+            request.httpBody = try JSONEncoder().encode(
+                SessionChatRequest(message: MessageContent(text: message, images: images))
+            )
+            return request
+        }
+    }
+
+    /// Sends the request `build` returns and streams the session chat events of its SSE response, in order,
+    /// until `done` or the end of the response. Shared with `SidecarClient`, whose streams carry the same
+    /// events. Cancelling the consuming task, or leaving the loop, cancels the request and finishes the
+    /// stream without an error; other failures finish it with a `HermesAPIError`. Never retried.
+    func streamEvents(
+        _ build: @escaping @Sendable () throws -> URLRequest
+    ) -> AsyncThrowingStream<SessionChatEvent, any Error> {
+        let session = session
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    // The id goes into the path as is: it must be a single segment.
-                    guard !sessionID.isEmpty, !sessionID.contains("/") else {
-                        throw HermesAPIError.invalidResponse
-                    }
-                    var request = makeRequest(
-                        method: "POST",
-                        path: HermesAPIPaths.sessionChatStream(sessionID),
-                        accept: "text/event-stream"
-                    )
-                    request.httpBody = try JSONEncoder().encode(
-                        SessionChatRequest(message: MessageContent(text: message, images: images))
-                    )
+                    let request = try build()
                     #if canImport(Darwin)
                         let (bytes, response) = try await session.bytes(for: request)
                         try Self.validate(response, requestURL: request.url)
@@ -355,7 +367,7 @@ public struct HermesClient: Sendable {
     }
 
     /// A session id goes into the path as is: it must be a single, non-empty segment.
-    private static func checkPathSegment(_ sessionID: String) throws {
+    static func checkPathSegment(_ sessionID: String) throws {
         guard !sessionID.isEmpty, !sessionID.contains("/") else {
             throw HermesAPIError.invalidResponse
         }

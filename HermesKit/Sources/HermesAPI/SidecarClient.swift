@@ -10,6 +10,28 @@ public struct SidecarStatus: Sendable, Equatable {
     public let version: String
 }
 
+/// What the sidecar reports at `GET /sessions/{id}/stream/status`: whether a turn of the session runs.
+public struct SidecarStreamStatus: Sendable, Equatable, Decodable {
+    /// `true` while a turn runs: `attachStream(sessionID:)` then follows it.
+    public let isActive: Bool
+    /// The id of the message the running turn answers, or `nil`.
+    public let messageID: String?
+    /// When the running turn started, as the sidecar wrote it, or `nil`.
+    public let startedAt: String?
+
+    public init(isActive: Bool, messageID: String? = nil, startedAt: String? = nil) {
+        self.isActive = isActive
+        self.messageID = messageID
+        self.startedAt = startedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case isActive = "is_active"
+        case messageID = "message_id"
+        case startedAt = "started_at"
+    }
+}
+
 /// Client for the optional hermes-sidecar, which adds endpoints Hermes lacks. It takes the same API key as
 /// the instance; `configuration.baseURL` is the sidecar base URL (prefix included, for example `…/sidecar`).
 public struct SidecarClient: Sendable {
@@ -76,6 +98,65 @@ public struct SidecarClient: Sendable {
             throw CancellationError()
         } catch {
             throw HermesAPIError.from(error)
+        }
+    }
+
+    // MARK: Streams
+
+    /// Whether a turn of the session runs on the sidecar, from `GET {sidecar}/sessions/{id}/stream/status`.
+    ///
+    /// Throws `HermesAPIError`; cancellation throws `CancellationError`.
+    public func activeStreamStatus(sessionID: String) async throws -> SidecarStreamStatus {
+        do {
+            try HermesClient.checkPathSegment(sessionID)
+            let request = client.makeRequest(
+                method: "GET", path: SidecarPaths.sessionStreamStatus(sessionID), accept: "application/json"
+            )
+            let (data, response) = try await client.sessionForSidecar.data(for: request)
+            try HermesClient.validate(response, requestURL: request.url)
+            return try JSONDecoder().decode(SidecarStreamStatus.self, from: data)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            throw HermesAPIError.from(error)
+        }
+    }
+
+    /// Sends one message to a session through the sidecar and streams the reply events, in order, as
+    /// `HermesClient.streamSessionChat(sessionID:message:images:)` does.
+    ///
+    /// `POST {sidecar}/sessions/{id}/chat/stream`, with the body Hermes takes. The sidecar runs the turn in the
+    /// background: cancelling the consuming task, or leaving the loop, only stops listening, and
+    /// `attachStream(sessionID:)` picks the turn up again. The request is never retried automatically.
+    public func streamChat(
+        sessionID: String, message: String, images: [ImageAttachment] = []
+    ) -> AsyncThrowingStream<SessionChatEvent, any Error> {
+        let client = client
+        return client.streamEvents {
+            try HermesClient.checkPathSegment(sessionID)
+            var request = client.makeRequest(
+                method: "POST", path: SidecarPaths.sessionChatStream(sessionID), accept: "text/event-stream"
+            )
+            request.httpBody = try JSONEncoder().encode(
+                SessionChatRequest(message: MessageContent(text: message, images: images))
+            )
+            return request
+        }
+    }
+
+    /// Attaches to the turn running in a session, from `GET {sidecar}/sessions/{id}/stream`: the events the
+    /// sidecar buffered since the turn started, then the live ones, until `done`.
+    ///
+    /// Cancelling the consuming task, or leaving the loop, stops listening; the turn goes on.
+    public func attachStream(sessionID: String) -> AsyncThrowingStream<SessionChatEvent, any Error> {
+        let client = client
+        return client.streamEvents {
+            try HermesClient.checkPathSegment(sessionID)
+            return client.makeRequest(
+                method: "GET", path: SidecarPaths.sessionStream(sessionID), accept: "text/event-stream"
+            )
         }
     }
 
@@ -231,6 +312,24 @@ public enum SidecarPaths {
     /// `404` when it is gone, `503` when the sidecar has no media folder.
     public static func media(sha256: String) -> String {
         "/media/\(sha256)"
+    }
+
+    /// Sends a message to a session, `POST` with the body of Hermes's chat stream: the sidecar runs the turn
+    /// in the background and streams its events as SSE, the same events Hermes sends.
+    public static func sessionChatStream(_ sessionID: String) -> String {
+        "/sessions/\(sessionID)/chat/stream"
+    }
+
+    /// The turn running in a session, `GET`: an SSE stream replaying the buffered events of the turn, then
+    /// the live ones until `done`.
+    public static func sessionStream(_ sessionID: String) -> String {
+        "/sessions/\(sessionID)/stream"
+    }
+
+    /// Whether a turn runs in a session, `GET`:
+    /// `{"is_active": bool, "message_id": string | null, "started_at": string | null}`.
+    public static func sessionStreamStatus(_ sessionID: String) -> String {
+        "\(sessionStream(sessionID))/status"
     }
 
     /// Every project, `GET` (sorted by name ignoring case) or `POST` `{"name"}` (`201` with the new project).

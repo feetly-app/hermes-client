@@ -48,10 +48,12 @@ final class AppState {
             return
         }
         let client = HermesClient(configuration: HermesClientConfiguration(baseURL: baseURL, apiKey: key))
-        // Everything the sidecar adds (stored images, projects) needs one: without it, no sidecar request is made.
+        // Everything the sidecar adds (stored images, projects, background turns) needs one: without it, no sidecar request is made.
         let sidecar = settings.sidecarClient(apiKey: key)
         browser = ConversationBrowser(
-            remoteSessions: RemoteSessionList(source: client, storedImages: sidecar.map { Self.storedImages($0) }),
+            remoteSessions: RemoteSessionList(
+                source: client, storedImages: sidecar.map { Self.storedImages($0) }, sidecar: sidecar
+            ),
             projects: sidecar.map { ProjectList(store: $0) },
             model: settings.modelChoice
         )

@@ -51,9 +51,10 @@ public final class ConversationBrowser {
     private let model: ModelChoice
     /// Sessions created here in which no message was sent yet.
     private var unsentSessionIDs: Set<String> = []
-    /// Sessions left while a reply was streaming. The reply exists only in the transcript that sent the
-    /// message: the instance offers no way to attach to a turn already running, so opening the session
-    /// again shows that transcript instead of a page read from the instance.
+    /// Sessions left while a reply was streaming. Without a sidecar the reply exists only in the transcript
+    /// that sent the message: the instance offers no way to attach to a turn already running, so opening the
+    /// session again shows that transcript instead of a page read from the instance. With a sidecar a new
+    /// transcript could attach to the turn, but keeping this one keeps the reply without a round trip.
     private var liveTranscripts: [RemoteTranscript] = []
 
     /// `model` is the model new conversations run on, from the connection settings. `projects` is `nil`
