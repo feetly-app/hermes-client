@@ -39,7 +39,9 @@ struct ProjectSidebarView: View {
                     repositoriesSection(project)
                     conversationsSection(project)
                 }
+                .sobreListStyle()
                 .navigationTitle(project.name)
+                .largeNavigationTitle()
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
@@ -77,20 +79,6 @@ struct ProjectSidebarView: View {
                 ContentUnavailableView("Project not found", systemImage: "folder.badge.questionmark")
             }
         }
-        .onAppear {
-            browser.openProject(projectID)
-        }
-        .onDisappear {
-            if browser.openedProjectID == projectID {
-                browser.openProject("") // clears openedProjectID, closing the project
-            }
-        }
-        // Sync project state
-        .onChange(of: project) { _, newValue in
-            if newValue == nil {
-                browser.select(nil)
-            }
-        }
         .task(id: project?.conversationIDs) {
             if let project {
                 await browser.loadConversations(in: project)
@@ -113,6 +101,7 @@ struct ProjectSidebarView: View {
                             .textSelection(.enabled)
                     }
                     .lineLimit(1)
+                    .listRowSeparator(.hidden)
                     .contextMenu {
                         Button("Detach", systemImage: "trash", role: .destructive) {
                             deletingRepository = repository.id
@@ -202,6 +191,7 @@ struct ProjectSidebarView: View {
                         }
                     }
                     .lineLimit(1)
+                    .listRowSeparator(.hidden)
                     .modifier(RowActions(
                         onRename: {
                             draftTitle = session.title ?? ""
@@ -239,19 +229,13 @@ struct ProjectSidebarView: View {
     }
 
     private func projectRowContent(_ session: RemoteSession) -> some View {
-        let isSelected = browser.selectedSessionID == session.id
-        return Label {
+        Label {
             Text(session.displayTitle)
         } icon: {
             Image(systemName: ConversationListView.icon(for: session.kind))
         }
         .lineLimit(1)
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background(
-            isSelected && onSelectSession != nil ? Color.accentColor.opacity(0.15) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6)
-        )
+        .modifier(SelectableRow(isSelectable: onSelectSession != nil, isSelected: browser.selectedSessionID == session.id))
     }
 
     // MARK: Actions
@@ -326,5 +310,5 @@ struct ProjectSidebarView: View {
 
     private var isDeletingRepository: Binding<Bool> {
         Binding(get: { deletingRepository != nil }, set: { if !$0 { deletingRepository = nil } })
-     }
+    }
 }

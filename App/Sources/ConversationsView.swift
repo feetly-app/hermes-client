@@ -2,11 +2,17 @@ import HermesAPI
 import HermesChat
 import SwiftUI
 
-/// Main screen: adaptive navigation.
-/// - On compact widths (iPhone): uses a classic, robust single-column NavigationStack with 100% platform isolation.
-/// - On regular widths (iPad, Mac): uses a native Two-Column NavigationSplitView.
-///   Column 1: projects list + recent conversations list, navigating to project detail on project tap.
-///   Column 2: active conversation detail (ChatView) on conversation tap.
+/// Main screen: adaptive navigation, driven by what the browser has open.
+///
+/// - Compact width (iPhone, narrow iPad window): a single `NavigationStack`. The list, then a project screen,
+///   then a chat.
+/// - Regular width (iPad, Mac): a two-column `NavigationSplitView`. The sidebar holds the list and, pushed in
+///   it, a project screen; the detail column shows the open conversation.
+///
+/// The browser (`openedProjectID`, the open transcript) is the single source of truth. Each layout keeps a path
+/// of `SidebarItem`s: a change of path opens or closes things in the browser, and a change in the browser (a new
+/// conversation, a new or deleted project, a fork) rebuilds the paths. Both directions converge, so they do not
+/// loop.
 struct ConversationsView: View {
     let browser: ConversationBrowser
     /// Edited by the settings sheet.
@@ -16,32 +22,42 @@ struct ConversationsView: View {
     /// Why the last action on a conversation failed, shown in an alert.
     @State private var failure: String?
 
-    // Multi-column split view path for macOS / iPadOS
-    @State private var sidebarPath = NavigationPath()
+    /// Compact layout: the whole stack, an optional project then an optional conversation.
+    @State private var stackPath: [SidebarItem] = []
+    /// Regular layout: the sidebar stack, the open project at most. The conversation shows in the detail column.
+    @State private var sidebarPath: [SidebarItem] = []
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var isCompact: Bool {
         #if os(iOS)
-        return UIDevice.current.userInterfaceIdiom == .phone || sizeClass == .compact
+            UIDevice.current.userInterfaceIdiom == .phone || sizeClass == .compact
         #else
-        return false
+            false
         #endif
     }
 
     var body: some View {
         Group {
             if isCompact {
-                iphoneBody
+                compactBody
             } else {
-                macPadBody
+                splitBody
             }
         }
+        // Once per browser (a new one comes with new connection settings), not each time the list reappears.
         .task(id: ObjectIdentifier(browser)) {
             await browser.reloadSessions()
         }
-        .refreshable {
-            await browser.reloadSessions()
+        .onAppear(perform: syncPathsFromBrowser)
+        .onChange(of: isCompact) { syncPathsFromBrowser() }
+        .onChange(of: browser.openedProjectID) { syncPathsFromBrowser() }
+        .onChange(of: browser.selectedSessionID) { syncPathsFromBrowser() }
+        .onChange(of: stackPath) { _, path in
+            if isCompact { apply(path) }
+        }
+        .onChange(of: sidebarPath) { _, path in
+            if !isCompact { apply(path) }
         }
         // ⌘N in the menu bar, see `NewConversationCommand`.
         .focusedSceneValue(\.newConversation, newConversationAction)
@@ -71,10 +87,10 @@ struct ConversationsView: View {
         }
     }
 
-    // MARK: - iPhone (Single Column NavigationStack)
+    // MARK: - Compact (iPhone)
 
-    private var iphoneBody: some View {
-        NavigationStack {
+    private var compactBody: some View {
+        NavigationStack(path: $stackPath) {
             ConversationListView(browser: browser, failure: $failure)
                 .navigationTitle("Conversations")
                 .sidebarToolbar(
@@ -82,83 +98,146 @@ struct ConversationsView: View {
                     isCreating: browser.isCreating,
                     startConversation: { startConversation(inProject: browser.openedProjectID) }
                 )
-                .navigationDestination(for: String.self) { projectID in
-                    ProjectSidebarView(
-                        browser: browser,
-                        projectID: projectID,
-                        startConversation: { startConversation(inProject: projectID) },
-                        failure: $failure
-                    )
-                }
                 .navigationDestination(for: SidebarItem.self) { item in
-                    if case .session(let sessionID) = item {
-                        if let session = browser.remoteSessions.sessions(withIDs: [sessionID]).first ?? browser.remoteSessions.sessions.first(where: { $0.id == sessionID }) {
-                            ChatView(transcript: browser.remoteSessions.transcript(for: session))
-                                .id(sessionID)
-                                .onAppear {
-                                    browser.openRemote(session)
-                                }
-                        }
+                    switch item {
+                    case .project(let projectID):
+                        projectScreen(projectID, onSelectSession: nil)
+                    case .session(let sessionID):
+                        OpenConversationView(browser: browser, sessionID: sessionID)
                     }
                 }
         }
     }
 
-    // MARK: - macOS / iPadOS (Two-Column NavigationSplitView)
+    // MARK: - Regular (iPad, Mac)
 
-    private var macPadBody: some View {
+    private var splitBody: some View {
         NavigationSplitView {
-            NavigationStack(path: $sidebarPath) {
-                ConversationListView(
-                    browser: browser,
-                    failure: $failure,
-                    onSelectSession: { session in
-                        browser.openRemote(session)
-                    }
-                )
-                .navigationTitle("Conversations")
-                .sidebarToolbar(
-                    isShowingSettings: $isShowingSettings,
-                    isCreating: browser.isCreating,
-                    startConversation: { startConversation(inProject: browser.openedProjectID) }
-                )
-                .navigationDestination(for: String.self) { projectID in
-                    ProjectSidebarView(
-                        browser: browser,
-                        projectID: projectID,
-                        startConversation: { startConversation(inProject: projectID) },
-                        failure: $failure,
-                        onSelectSession: { session in
-                            browser.openRemote(session, inProject: projectID)
-                        }
-                    )
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 400)
+            sidebar
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 400)
         } detail: {
-            Group {
-                if let transcript = browser.openedRemote {
-                    ChatView(transcript: transcript)
-                        .id(transcript.sessionID)
-                } else if browser.isCreating {
-                    ProgressView("Starting the conversation…")
-                } else {
-                    ContentUnavailableView {
-                        Label("No conversation open", systemImage: "bubble.left.and.bubble.right")
-                    } description: {
-                        Text("Pick a conversation in the list, or start a new one.")
-                    } actions: {
-                        Button("New conversation") {
-                            startConversation(inProject: browser.openedProjectID)
-                        }
+            if let transcript = browser.openedRemote {
+                ChatView(transcript: transcript)
+                    .id(transcript.sessionID)
+            } else if browser.isCreating {
+                ProgressView("Starting the conversation…")
+            } else {
+                ContentUnavailableView {
+                    Label("No conversation open", systemImage: "bubble.left.and.bubble.right")
+                } description: {
+                    Text("Pick a conversation in the list, or start a new one.")
+                } actions: {
+                    Button("New conversation") {
+                        startConversation(inProject: browser.openedProjectID)
                     }
+                    .disabled(browser.isCreating)
                 }
             }
         }
-        .onAppear {
-            if let projectID = browser.openedProjectID, sidebarPath.isEmpty {
-                sidebarPath.append(projectID)
+    }
+
+    /// The conversation list, or the open project's screen. On iOS the project is pushed on a stack. On macOS
+    /// a List pushed in a sidebar stack is never drawn, so the sidebar swaps its content instead, with a back
+    /// row at its top (⌘[).
+    @ViewBuilder
+    private var sidebar: some View {
+        #if os(macOS)
+            if let projectID = sidebarPath.last?.projectID {
+                projectScreen(projectID) { browser.openRemote($0, inProject: projectID) }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        Button {
+                            sidebarPath = []
+                        } label: {
+                            Label("Conversations", systemImage: "chevron.backward")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut("[", modifiers: .command)
+                        .help("Back to the conversations (⌘[)")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
+                    .id(projectID)
+            } else {
+                conversationList(onOpenProject: { sidebarPath = [.project($0)] })
             }
+        #else
+            NavigationStack(path: $sidebarPath) {
+                conversationList(onOpenProject: nil)
+                    .navigationDestination(for: SidebarItem.self) { item in
+                        if case .project(let projectID) = item {
+                            projectScreen(projectID) { browser.openRemote($0, inProject: projectID) }
+                        }
+                    }
+            }
+        #endif
+    }
+
+    private func conversationList(onOpenProject: ((String) -> Void)?) -> some View {
+        ConversationListView(
+            browser: browser,
+            failure: $failure,
+            onSelectSession: { browser.openRemote($0) },
+            onOpenProject: onOpenProject
+        )
+        .navigationTitle("Conversations")
+        .sidebarToolbar(
+            isShowingSettings: $isShowingSettings,
+            isCreating: browser.isCreating,
+            startConversation: { startConversation(inProject: browser.openedProjectID) }
+        )
+    }
+
+    private func projectScreen(_ projectID: String, onSelectSession: ((RemoteSession) -> Void)?) -> some View {
+        ProjectSidebarView(
+            browser: browser,
+            projectID: projectID,
+            startConversation: { startConversation(inProject: projectID) },
+            failure: $failure,
+            onSelectSession: onSelectSession
+        )
+    }
+
+    // MARK: - Navigation state
+
+    /// Opens in the browser what a path shows: the last project in it, and in the compact stack the last
+    /// conversation. Leaving a chat closes the conversation, leaving a project screen closes the project.
+    private func apply(_ path: [SidebarItem]) {
+        let projectID = path.lazy.compactMap(\.projectID).last
+        if let sessionID = path.lazy.compactMap(\.sessionID).last {
+            browser.openSession(sessionID, inProject: projectID)
+            return
+        }
+        // The compact stack shows the conversation itself: no chat in it means none open.
+        if isCompact, browser.openedRemote != nil {
+            browser.closeConversation()
+        }
+        if let projectID {
+            browser.openProject(projectID)
+        } else if browser.openedProjectID != nil {
+            browser.closeProject()
+        }
+    }
+
+    /// Rebuilds both paths from what the browser has open. A chat already pushed for the open conversation is
+    /// kept, even when a fork changed the id its row carries.
+    private func syncPathsFromBrowser() {
+        let project = browser.openedProjectID.map { [SidebarItem.project($0)] } ?? []
+        var stack = project
+        if let selected = browser.selectedSessionID {
+            if case .session(let pushed)? = stackPath.last, browser.isOpen(pushed) {
+                stack.append(.session(pushed))
+            } else {
+                stack.append(.session(selected))
+            }
+        }
+        if stackPath != stack {
+            stackPath = stack
+        }
+        if sidebarPath != project {
+            sidebarPath = project
         }
     }
 
@@ -178,6 +257,7 @@ struct ConversationsView: View {
         }
     }
 
+    /// The user-facing reason of an error thrown by the browser.
     static func reason(_ error: any Error) -> String {
         HermesAPIError.from(error).errorDescription ?? "The request failed."
     }
@@ -199,6 +279,32 @@ extension View {
                 Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
                     .disabled(isCreating)
             }
+        }
+    }
+}
+
+extension SidebarItem {
+    fileprivate var projectID: String? {
+        if case .project(let id) = self { id } else { nil }
+    }
+
+    fileprivate var sessionID: String? {
+        if case .session(let id) = self { id } else { nil }
+    }
+}
+
+/// The chat pushed in the compact stack: the browser's open transcript, once it is this conversation. The
+/// transcript comes from the browser, never built here, so it survives the view being rebuilt.
+private struct OpenConversationView: View {
+    let browser: ConversationBrowser
+    let sessionID: String
+
+    var body: some View {
+        if let transcript = browser.openedRemote, browser.isOpen(sessionID) {
+            ChatView(transcript: transcript)
+                .id(transcript.sessionID)
+        } else {
+            ProgressView()
         }
     }
 }

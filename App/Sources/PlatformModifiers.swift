@@ -11,6 +11,17 @@ extension View {
         #endif
     }
 
+    /// Large navigation title on iOS, also in the sidebar of a split view, where the bar is too narrow for an
+    /// inline title next to the toolbar buttons. A no-op on macOS.
+    @ViewBuilder
+    func largeNavigationTitle() -> some View {
+        #if os(iOS)
+            navigationBarTitleDisplayMode(.large)
+        #else
+            self
+        #endif
+    }
+
     /// Hides the keyboard of a conversation screen two ways: a tap anywhere in the messages, and the
     /// native interactive dismiss, where the keyboard follows a finger dragging down past its top edge.
     /// iOS only: macOS has no software keyboard.

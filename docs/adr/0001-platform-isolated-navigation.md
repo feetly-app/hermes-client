@@ -1,28 +1,19 @@
 # ADR 0001: Platform-Isolated Navigation Architecture
 
 ## Status
-Proposed
+Accepted
 
 ## Context
-The application is a multiplatform SwiftUI app running on iOS (iPhone), iPadOS (iPad), and macOS (Mac).
-SwiftUI provides two primary navigation paradigms: `NavigationStack` (hierarchical push-pop, ideal for compact screens) and `NavigationSplitView` (multi-column split layouts, ideal for regular/wide screens).
+The app runs on iPhone, iPad and Mac. SwiftUI offers `NavigationStack` (push-pop, for compact screens) and `NavigationSplitView` (columns, for wide screens).
 
-Initially, we attempted to use a unified `NavigationSplitView` with custom programmatic routing across all platforms. This resulted in significant platform-specific bugs:
-- **On iOS**: Complex layout desynchronization between list selections and active stack paths led to double-push bugs, automatic pop issues on back button clicks, and unexpected redirects to blank placeholders.
-- **On macOS/iPadOS**: Nested `NavigationStack` instances inside sidebar columns resulted in buggy rendering, lost selection highlights, and infinite rendering loops.
-
-Apple's Human Interface Guidelines (HIG) recommend a simple hierarchical stack for compact screens, and a multi-column split view for wide screens (specifically a three-column split view for communication and document-focused apps like Mail and Notes).
+A single `NavigationSplitView` driven by list selections caused double pushes and unexpected pops on iPhone. Navigation destinations that built their own transcript also showed empty chats: the destination was rebuilt whenever the browser changed, with a new transcript that was never loaded. Leaving a project screen did not close the project, so a new conversation could land in the wrong project.
 
 ## Decision
-We decide to completely isolate the navigation architectures of iOS (iPhone) and macOS/iPadOS at compile time using Swift's `#if os(macOS)` or size class checks:
-
-1. **iPhone (Compact size class)**: Uses a clean, robust, and single-column **Hierarchical Navigation Stack** (`NavigationStack` as the root container) that is completely native and bug-free on compact screens.
-2. **Mac & iPad (Regular size class)**: Uses a native **Three-Column Navigation Split View** (`NavigationSplitView`) consisting of:
-   - Column 1: Sidebar (Smart Folder "Recents", and custom Projects list).
-   - Column 2: Content List (Conversations inside the selected Sidebar Folder, plus repository management for Projects).
-   - Column 3: Detail Chat (Active message thread, styled as a native detail pane).
+1. **Compact width (iPhone)**: a single `NavigationStack` with a typed path of `SidebarItem`s: the list, then a project screen, then a chat.
+2. **Regular width (iPad, Mac)**: a two-column `NavigationSplitView`. The sidebar path holds the open project at most; the detail column shows the open conversation. On iPad the sidebar is a `NavigationStack` that pushes the project screen. On macOS a `List` pushed in a sidebar stack is never drawn, so the sidebar swaps the conversation list for the project screen, with a back row at its top (⌘[).
+3. **One source of truth**: `ConversationBrowser` (open project, open transcript). A path change opens or closes things in the browser; a browser change (new conversation, new or deleted project, fork) rebuilds the paths. The chat always shows the browser's transcript, never one built by a view.
 
 ## Consequences
-- **Zero Mobile Regressions**: The iOS navigation remains completely untouched and isolated, guaranteeing 100% safety for the mobile app.
-- **Premium Desktop Experience**: macOS and iPadOS receive a first-class, highly polished, native three-column layout that behaves exactly like Apple Mail or Notes.
-- **Maintainability**: Future developers can easily modify desktop-specific split-view details or mobile-specific stack flows independently, without fearing cross-platform regressions.
+- iPhone navigation stays a plain stack, independent of the split view.
+- Creating a conversation, a project, or deleting one moves the navigation in every layout without extra code in the views.
+- Switching size class on iPad (multitasking) rebuilds the active layout from the browser.

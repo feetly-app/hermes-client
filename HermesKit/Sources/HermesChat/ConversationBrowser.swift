@@ -175,6 +175,30 @@ public final class ConversationBrowser {
         closeOpened()
     }
 
+    /// Closes the open project and keeps the open conversation: back from a project screen to the list.
+    public func closeProject() {
+        openedProjectID = nil
+    }
+
+    /// `true` when the open conversation is the session with this id, or a fork of it.
+    public func isOpen(_ sessionID: String) -> Bool {
+        guard let openedRemote else { return false }
+        return openedRemote.sessionID == sessionID || openedRemote.activeSessionID == sessionID
+    }
+
+    /// Opens the known session with this id (from the loaded pages, or fetched for a project), over the
+    /// project with `projectID` if any. Returns `false`, and changes nothing, for an id not known yet.
+    @discardableResult
+    public func openSession(_ sessionID: String, inProject projectID: String? = nil) -> Bool {
+        if isOpen(sessionID) {
+            openedProjectID = projectID.flatMap { projects?.project(id: $0) != nil ? $0 : nil }
+            return true
+        }
+        guard let session = remoteSessions.sessions(withIDs: [sessionID]).first else { return false }
+        openRemote(session, inProject: projectID)
+        return true
+    }
+
     /// Clears `projectNotice` once the alert is dismissed.
     public func dismissProjectNotice() {
         projectNotice = nil
