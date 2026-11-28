@@ -55,14 +55,19 @@ public final class RemoteSessionList {
     private var orphanIDs: Set<String> = []
     private var fetchingIDs: Set<String> = []
     private let storedImages: StoredImageLoader?
+    private let sidecar: (any TurnStreaming)?
     /// Number of unpinned rows received so far, which is the offset of the next page.
     private var windowOffset = 0
 
     /// `storedImages` gets back the images stored messages name, through the sidecar. `nil` without one:
-    /// transcripts then show those images as not available.
-    public init(source: any SessionListing, storedImages: StoredImageLoader? = nil) {
+    /// transcripts then show those images as not available. `sidecar` is the sidecar's stream endpoints:
+    /// transcripts send through it and attach to turns already running; `nil` without a sidecar.
+    public init(
+        source: any SessionListing, storedImages: StoredImageLoader? = nil, sidecar: (any TurnStreaming)? = nil
+    ) {
         self.source = source
         self.storedImages = storedImages
+        self.sidecar = sidecar
     }
 
     public var isLoading: Bool {
@@ -226,7 +231,8 @@ public final class RemoteSessionList {
             model: model ?? session.model.map { ModelChoice(model: $0) },
             source: source,
             acceptsMessages: session.acceptsAPIMessages,
-            storedImages: storedImages
+            storedImages: storedImages,
+            sidecar: sidecar
         )
         transcript.onFork = { [weak self] fork in
             self?.replace(session.id, with: fork)

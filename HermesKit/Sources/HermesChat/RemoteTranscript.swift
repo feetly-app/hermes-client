@@ -58,6 +58,9 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
 /// session the first `send(_:images:)` forks it into an API session, which holds the same messages, and
 /// the transcript continues in the fork: `activeSessionID` changes, `sessionID` does not.
 ///
+/// With a sidecar, messages go through it (`POST {sidecar}/sessions/{id}/chat/stream`), which runs the turn in
+/// the background, and `load()` attaches to a turn still running so that its reply shows live.
+///
 /// `@Observable` is applied on Apple platforms, see `RemoteSessionList` for why it is left out on Linux.
 @MainActor
 #if !os(Linux)
@@ -104,25 +107,33 @@ public final class RemoteTranscript: Identifiable {
     /// Loads the images stored messages name, or `nil` without a sidecar: they then show as not available.
     public nonisolated let storedImages: StoredImageLoader?
     private let source: any SessionListing
+    /// The sidecar's stream endpoints, or `nil` without a sidecar: messages then go to the instance directly,
+    /// and a turn already running cannot be followed.
+    private let sidecar: (any TurnStreaming)?
     /// Messages received so far, displayed or not: the offset of the next page.
     private var received = 0
     private var sendTask: Task<Void, Never>?
     /// The page request in flight, shared by every caller of `load()` and `loadMore()`.
     private var loadTask: Task<Void, Never>?
+    /// Follows a turn attached to by `load()`, until its reply ended and was cleaned up.
+    private(set) var attachTask: Task<Void, Never>?
 
+    /// With a `sidecar`, messages are sent through it, and `load()` attaches to a turn already running.
     public init(
         sessionID: String,
         title: String?,
         model: ModelChoice? = nil,
         source: any SessionListing,
         acceptsMessages: Bool = true,
-        storedImages: StoredImageLoader? = nil
+        storedImages: StoredImageLoader? = nil,
+        sidecar: (any TurnStreaming)? = nil
     ) {
         self.storedImages = storedImages
         self.sessionID = sessionID
         self.title = title
         self.model = model
         self.source = source
+        self.sidecar = sidecar
         self.activeSessionID = sessionID
         self.acceptsMessages = acceptsMessages
     }
@@ -293,14 +304,48 @@ public final class RemoteTranscript: Identifiable {
     /// The request runs in a task this object owns, so cancelling the caller does not cancel it. On iOS 27
     /// a collapsed split view can send the detail view `onDisappear` right after it appears, which cancels
     /// the view's `.task`: the request must outlive it, or the transcript stays empty.
+    ///
+    /// With a sidecar, a turn of the session still running (sent from another device, or before the app
+    /// left) is then attached to: its reply shows as it streams, from the events the sidecar buffered, and
+    /// `isSending` stays `true` until it ends. `load()` does not wait for it.
     public func load() async {
         await run { transcript in
             let page = try await transcript.source.listSessionMessages(
                 sessionID: transcript.activeSessionID, limit: Self.pageSize, offset: 0
             )
-            transcript.lines = Self.lines(from: page.messages)
+            // A reply streaming meanwhile is not in the page yet: its lines stay below it.
+            let live = transcript.isSending ? transcript.lines.filter { $0.id.hasPrefix("local-") } : []
+            transcript.lines = Self.lines(from: page.messages) + live
             transcript.received = page.messages.count
             transcript.hasMore = page.hasMore
+            // The page shows at once, without waiting for the status check.
+            transcript.state = .loaded
+            await transcript.attachIfRunning()
+        }
+    }
+
+    /// Attaches to the turn the sidecar runs in the active session, if any. A failed status check is not an
+    /// error: the transcript then shows what the instance stored.
+    private func attachIfRunning() async {
+        guard let sidecar, !isSending else { return }
+        let sessionID = activeSessionID
+        guard let status = try? await sidecar.activeStreamStatus(sessionID: sessionID), status.isActive,
+              !isSending, sessionID == activeSessionID
+        else { return }
+        isSending = true
+        sendError = nil
+        let replyID = "local-assistant-\(UUID().uuidString)"
+        lines.append(TranscriptLine(id: replyID, role: "assistant", text: "", date: nil))
+        let stream = Task {
+            await self.consume(await sidecar.attachStream(sessionID: sessionID), replyID: replyID)
+        }
+        sendTask = stream
+        attachTask = Task {
+            await stream.value
+            self.sendTask = nil
+            self.isSending = false
+            self.attachTask = nil
+            self.onReplyEnded?()
         }
     }
 
@@ -368,7 +413,8 @@ public final class RemoteTranscript: Identifiable {
         onReplyEnded?()
     }
 
-    /// Stops the reply being streamed. The text received so far stays in the transcript.
+    /// Stops the reply being streamed. The text received so far stays in the transcript. Through a sidecar
+    /// the turn goes on there: this only stops following it.
     public func stop() {
         sendTask?.cancel()
     }
@@ -397,8 +443,19 @@ public final class RemoteTranscript: Identifiable {
             lines.removeAll { $0.id == replyID }
             return
         }
+        // Through the sidecar the turn runs in the background there, and can be attached to again.
+        let events: AsyncThrowingStream<SessionChatEvent, any Error>
+        if let sidecar {
+            events = await sidecar.streamChat(sessionID: activeSessionID, message: message, images: images)
+        } else {
+            events = await source.streamSessionChat(sessionID: activeSessionID, message: message, images: images)
+        }
+        await consume(events, replyID: replyID)
+    }
+
+    /// Shows the events of a reply on its line as they arrive, then tidies the line once the stream ends.
+    private func consume(_ events: AsyncThrowingStream<SessionChatEvent, any Error>, replyID: String) async {
         do {
-            let events = await source.streamSessionChat(sessionID: activeSessionID, message: message, images: images)
             for try await event in events {
                 switch event {
                 case .delta(let delta):
