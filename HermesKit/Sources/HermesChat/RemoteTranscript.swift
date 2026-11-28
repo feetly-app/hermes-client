@@ -20,6 +20,8 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
     /// The tools the agent ran and its reasoning, in order. Stored messages put them on lines of their own,
     /// with no text; a reply being streamed carries its steps above its text.
     public var steps: [ActivityStep]
+    /// `true` while the message is waiting in queue for earlier turns to finish.
+    public var isQueued: Bool
 
     public init(
         id: String,
@@ -28,7 +30,8 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
         date: Date?,
         images: [MessageImage] = [],
         notice: String? = nil,
-        steps: [ActivityStep] = []
+        steps: [ActivityStep] = [],
+        isQueued: Bool = false
     ) {
         self.id = id
         self.role = role
@@ -37,6 +40,7 @@ public struct TranscriptLine: Identifiable, Equatable, Sendable {
         self.images = images
         self.notice = notice
         self.steps = steps
+        self.isQueued = isQueued
     }
 
     /// `true` for a line that only shows what the agent did, with no message text.
@@ -119,6 +123,19 @@ public final class RemoteTranscript: Identifiable {
     private var loadTask: Task<Void, Never>?
     /// Follows a turn attached to by `load()`, until its reply ended and was cleaned up.
     private(set) var attachTask: Task<Void, Never>?
+
+    private struct QueuedTurn: Sendable {
+        let lineID: String
+        let message: String
+        let images: [ImageAttachment]
+    }
+
+    private var sendQueue: [QueuedTurn] = []
+
+    /// Whether there are messages waiting in queue to be sent.
+    public var hasQueuedMessages: Bool {
+        !sendQueue.isEmpty
+    }
 
     /// With a `sidecar`, messages are sent through it, and `load()` attaches to a turn already running.
     public init(
@@ -222,7 +239,8 @@ public final class RemoteTranscript: Identifiable {
             role: message.role,
             text: text,
             date: message.timestamp,
-            images: references.map { .stored(sha256: $0.sha256) }
+            images: references.map { .stored(sha256: $0.sha256) },
+            isQueued: message.displayKind == "queued"
         )
     }
 
@@ -345,6 +363,16 @@ public final class RemoteTranscript: Identifiable {
         sendTask = stream
         attachTask = Task {
             await stream.value
+            if !self.sendQueue.isEmpty && self.sendError == nil && !Task.isCancelled {
+                let next = self.sendQueue.removeFirst()
+                let task = Task {
+                    await self.processSendQueue(
+                        initialMessage: next.message, initialImages: next.images, initialLineID: next.lineID
+                    )
+                }
+                self.sendTask = task
+                await task.value
+            }
             self.sendTask = nil
             self.isSending = false
             self.onStreamingChanged?(false)
@@ -391,26 +419,37 @@ public final class RemoteTranscript: Identifiable {
     }
 
     /// Sends a message, with its images, to the session and shows the reply as it streams. The user line
-    /// appears at once. A message with neither text nor images is ignored, and so is a call made while a
-    /// reply is still streaming. Images past `maxImagesPerMessage` are dropped.
+    /// appears at once. If a reply is still streaming, the message is queued and sent as soon as the
+    /// previous turns finish. A message with neither text nor images is ignored. Images past
+    /// `maxImagesPerMessage` are dropped.
     public func send(_ text: String, images: [ImageAttachment] = []) async {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = Array(images.prefix(Self.maxImagesPerMessage))
-        guard !message.isEmpty || !images.isEmpty, !isSending else { return }
+        guard !message.isEmpty || !images.isEmpty else { return }
+
+        let userLineID = "local-user-\(UUID().uuidString)"
+        let userLine = TranscriptLine(
+            id: userLineID, role: "user", text: message, date: Date(),
+            images: images.map { .attached($0) },
+            isQueued: isSending
+        )
+        lines.append(userLine)
+
+        if isSending {
+            sendQueue.append(QueuedTurn(lineID: userLineID, message: message, images: images))
+            return
+        }
+
         isSending = true
         onStreamingChanged?(true)
         hasSent = true
         sendError = nil
-        lines.append(
-            TranscriptLine(
-                id: "local-user-\(UUID().uuidString)", role: "user", text: message, date: Date(),
-                images: images.map { .attached($0) }
-            )
-        )
-        let replyID = "local-assistant-\(UUID().uuidString)"
-        lines.append(TranscriptLine(id: replyID, role: "assistant", text: "", date: nil))
 
-        let task = Task { await self.stream(message, images: images, replyID: replyID) }
+        let task = Task {
+            await self.processSendQueue(
+                initialMessage: message, initialImages: images, initialLineID: userLineID
+            )
+        }
         sendTask = task
         await task.value
         sendTask = nil
@@ -419,10 +458,56 @@ public final class RemoteTranscript: Identifiable {
         onReplyEnded?()
     }
 
-    /// Stops the reply being streamed. The text received so far stays in the transcript. Through a sidecar
-    /// the turn goes on there: this only stops following it.
+    /// Stops the reply being streamed and clears any queued messages. The text received so far stays
+    /// in the transcript. Through a sidecar the turn goes on there: this only stops following it.
     public func stop() {
+        clearSendQueue()
         sendTask?.cancel()
+    }
+
+    private func processSendQueue(
+        initialMessage: String, initialImages: [ImageAttachment], initialLineID: String
+    ) async {
+        var current: (message: String, images: [ImageAttachment], lineID: String)? = (
+            initialMessage, initialImages, initialLineID
+        )
+
+        while let active = current {
+            if let index = lines.firstIndex(where: { $0.id == active.lineID }) {
+                lines[index].isQueued = false
+            }
+
+            let replyID = "local-assistant-\(UUID().uuidString)"
+            let replyLine = TranscriptLine(id: replyID, role: "assistant", text: "", date: nil)
+            if let userIndex = lines.firstIndex(where: { $0.id == active.lineID }) {
+                lines.insert(replyLine, at: userIndex + 1)
+            } else {
+                lines.append(replyLine)
+            }
+
+            await stream(active.message, images: active.images, replyID: replyID)
+
+            if Task.isCancelled || sendError != nil {
+                clearSendQueue()
+                break
+            }
+
+            if !sendQueue.isEmpty {
+                let next = sendQueue.removeFirst()
+                current = (next.message, next.images, next.lineID)
+            } else {
+                current = nil
+            }
+        }
+    }
+
+    private func clearSendQueue() {
+        for queued in sendQueue {
+            if let index = lines.firstIndex(where: { $0.id == queued.lineID }) {
+                lines[index].isQueued = false
+            }
+        }
+        sendQueue.removeAll()
     }
 
     /// Forks the active session so that it accepts API messages. Returns `false`, with `sendError` set,
@@ -547,7 +632,7 @@ public final class RemoteTranscript: Identifiable {
         let line = lines[index]
         lines[index] = TranscriptLine(
             id: line.id, role: line.role, text: update(line.text), date: line.date,
-            images: line.images, notice: line.notice, steps: line.steps
+            images: line.images, notice: line.notice, steps: line.steps, isQueued: line.isQueued
         )
     }
 }

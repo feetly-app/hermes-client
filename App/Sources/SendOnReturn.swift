@@ -12,7 +12,7 @@ import SwiftUI
     private final class ReturnKeyMonitor {
         /// `true` while the composer text field is focused.
         var isActive = false
-        /// `true` when there is something to send and no reply is in progress.
+        /// `true` when there is something to send.
         var canSend = false
         var send: () -> Void = {}
         private var token: Any?

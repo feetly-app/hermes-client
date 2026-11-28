@@ -174,10 +174,8 @@ private extension ChatView {
                 pendingImages: pending.attachments,
                 onRemoveImage: removeImage,
                 onAdd: { isAddingImages = true },
-                isBusy: transcript.isSending,
                 canSend: canSend,
-                onSend: send,
-                onStop: { transcript.stop() }
+                onSend: send
             )
         }
         .readableWidth()
@@ -352,6 +350,15 @@ struct MessageRow: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .background(.primary.opacity(0.12), in: .rect(cornerRadius: 22, style: .continuous))
+                }
+                if line.isQueued {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                        Text("Queued")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 4)
                 }
             }
             .padding(.leading, 40)

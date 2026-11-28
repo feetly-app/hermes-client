@@ -211,4 +211,169 @@ struct RemoteTranscriptSendTests {
         #expect(ended == 1)
         #expect(transcript.sendError != nil)
     }
+
+    @Test("sending while a turn streams queues the message with isQueued true, then drains when it finishes")
+    func queuesMessageWhileStreamingAndDrains() async {
+        let gate1 = Gate()
+        let gate2 = Gate()
+        let source = ControllableChatStreamSource(gates: [gate1, gate2])
+        let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source)
+
+        let send1 = Task { await transcript.send("First") }
+        await waitUntil { transcript.isSending }
+
+        await transcript.send("Second")
+
+        #expect(transcript.lines.count == 3)
+        #expect(transcript.lines.map(\.role) == ["user", "assistant", "user"])
+        #expect(transcript.lines.map(\.text) == ["First", "Reply to First", "Second"])
+        #expect(transcript.lines[0].isQueued == false)
+        #expect(transcript.lines[2].isQueued == true)
+        #expect(transcript.hasQueuedMessages)
+        #expect(await source.sent == ["First"])
+
+        await gate1.open()
+        await waitUntil { await source.sent.count == 2 }
+
+        #expect(transcript.lines[2].isQueued == false)
+        #expect(!transcript.hasQueuedMessages)
+        #expect(transcript.lines.map(\.role) == ["user", "assistant", "user", "assistant"])
+
+        await gate2.open()
+        await send1.value
+
+        #expect(transcript.lines.map(\.text) == ["First", "Reply to First", "Second", "Reply to Second"])
+        #expect(!transcript.isSending)
+    }
+
+    @Test("multiple queued messages are executed in FIFO order")
+    func multipleQueuedMessagesFIFO() async {
+        let gate1 = Gate()
+        let gate2 = Gate()
+        let gate3 = Gate()
+        let source = ControllableChatStreamSource(gates: [gate1, gate2, gate3])
+        let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source)
+
+        let send1 = Task { await transcript.send("First") }
+        await waitUntil { transcript.isSending }
+
+        await transcript.send("Second")
+        await transcript.send("Third")
+
+        #expect(transcript.lines.count == 4)
+        #expect(transcript.lines[2].text == "Second" && transcript.lines[2].isQueued)
+        #expect(transcript.lines[3].text == "Third" && transcript.lines[3].isQueued)
+        #expect(transcript.hasQueuedMessages)
+
+        await gate1.open()
+        await waitUntil { await source.sent.count == 2 }
+
+        #expect(transcript.lines[2].isQueued == false)
+        #expect(transcript.lines[4].text == "Third" && transcript.lines[4].isQueued)
+
+        await gate2.open()
+        await waitUntil { await source.sent.count == 3 }
+
+        #expect(transcript.lines[4].isQueued == false)
+
+        await gate3.open()
+        await send1.value
+
+        #expect(await source.sent == ["First", "Second", "Third"])
+        #expect(!transcript.isSending)
+    }
+
+    @Test("calling stop cancels stream and clears queued messages")
+    func stopClearsQueuedMessages() async {
+        let gate = Gate()
+        let source = ControllableChatStreamSource(gates: [gate])
+        let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source)
+
+        let send1 = Task { await transcript.send("First") }
+        await waitUntil { transcript.isSending }
+
+        await transcript.send("Second")
+        #expect(transcript.hasQueuedMessages)
+        #expect(transcript.lines.last?.isQueued == true)
+
+        transcript.stop()
+        await send1.value
+
+        #expect(!transcript.hasQueuedMessages)
+        #expect(transcript.lines.last?.isQueued == false)
+        #expect(await source.sent == ["First"])
+    }
+
+    @Test("a stored message with display_kind queued sets isQueued")
+    func queuedDisplayKind() {
+        let message = SessionMessage(
+            id: "m1", role: "user", content: "Pending prompt", displayKind: "queued"
+        )
+        let lines = RemoteTranscript.lines(from: [message])
+
+        #expect(lines.count == 1)
+        #expect(lines.first?.text == "Pending prompt")
+        #expect(lines.first?.isQueued == true)
+    }
+}
+
+actor Gate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isOpened = false
+
+    func wait() async {
+        if isOpened { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpened = true
+        for waiter in waiters {
+            waiter.resume()
+        }
+        waiters.removeAll()
+    }
+}
+
+actor ControllableChatStreamSource: SessionListing {
+    private let gates: [Gate]
+    private(set) var sent: [String] = []
+
+    init(gates: [Gate]) {
+        self.gates = gates
+    }
+
+    func forkSession(sessionID: String) async throws -> RemoteSession {
+        throw HermesAPIError.notFound
+    }
+
+    func listSessions(limit: Int, offset: Int) async throws -> SessionPage {
+        SessionPage(sessions: [], hasMore: false)
+    }
+
+    func listSessionMessages(sessionID: String, limit: Int, offset: Int) async throws -> SessionMessagesPage {
+        SessionMessagesPage(sessionID: sessionID, messages: [], hasMore: false)
+    }
+
+    func streamSessionChat(
+        sessionID: String, message: String, images: [ImageAttachment]
+    ) -> AsyncThrowingStream<SessionChatEvent, any Error> {
+        let index = sent.count
+        sent.append(message)
+        let gate = index < gates.count ? gates[index] : nil
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                continuation.yield(.delta("Reply to \(message)"))
+                if let gate {
+                    await gate.wait()
+                }
+                continuation.yield(.completed("Reply to \(message)"))
+                continuation.yield(.finished)
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }

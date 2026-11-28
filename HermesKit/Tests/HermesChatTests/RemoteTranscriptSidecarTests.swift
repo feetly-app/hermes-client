@@ -204,14 +204,16 @@ struct RemoteTranscriptSidecarTests {
         await waitUntil { transcript.lines.last?.text == "Working" }
 
         #expect(transcript.isSending)
-        // A message is not sent while the turn runs.
+        // A message is queued rather than sent immediately while the turn runs.
         await transcript.send("Another one")
         #expect(await sidecar.sent.isEmpty)
+        #expect(transcript.lines.last?.text == "Another one")
+        #expect(transcript.lines.last?.isQueued == true)
 
         transcript.stop()
         await waitUntilAttachEnds(transcript)
         #expect(!transcript.isSending)
-        #expect(transcript.lines.last?.text == "Working")
+        #expect(transcript.lines.last?.isQueued == false)
     }
 
     @Test("a load while the attached turn runs keeps its live reply below the page")

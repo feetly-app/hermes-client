@@ -3,13 +3,13 @@ import HermesChat
 import SwiftUI
 
 /// The message composer floating over the bottom of a conversation: a rounded glass card with the
-/// images waiting to be sent, the text field, and the action buttons (add, send or stop).
+/// images waiting to be sent, the text field, and the action buttons (add, send).
 ///
 /// Layout mirrors ChatGPT: single-row when the draft fits on one line, then animates to a stacked
 /// layout (text full-width on top, button row below) as the user types.
 ///
 /// **Keyboard preservation**: a custom `ComposerInputLayout` holds the add button, the text field,
-/// and the send/stop button as three always-present subviews. The layout repositions them between
+/// and the send button as three always-present subviews. The layout repositions them between
 /// compact and expanded without ever removing or re-adding any view, so SwiftUI never drops focus
 /// and the keyboard stays up during the transition.
 ///
@@ -32,10 +32,8 @@ struct ChatComposer: View {
     var onRemoveImage: (Int) -> Void = { _ in }
     /// Opens the add sheet. `nil` hides the add button.
     var onAdd: (() -> Void)?
-    let isBusy: Bool
     let canSend: Bool
     let onSend: () -> Void
-    let onStop: () -> Void
 
     @State private var isExpanded = false
     @State private var viewedImage: ViewedImage?
@@ -70,21 +68,14 @@ struct ChatComposer: View {
                 if let onAdd {
                     ComposerCircleButton(
                         "Add images", systemImage: "plus", size: buttonSize, action: onAdd)
-                        .disabled(isBusy)
                 } else {
                     Color.clear.frame(width: 0, height: 0)
                 }
                 composerTextField
-                if isBusy {
-                    ComposerCircleButton(
-                        "Stop", systemImage: "stop.fill", size: buttonSize,
-                        prominent: true, action: onStop)
-                } else {
-                    ComposerCircleButton(
-                        "Send", systemImage: "arrow.up", size: buttonSize,
-                        prominent: true, action: onSend)
-                        .disabled(!canSend)
-                }
+                ComposerCircleButton(
+                    "Send", systemImage: "arrow.up", size: buttonSize,
+                    prominent: true, action: onSend)
+                    .disabled(!canSend)
             }
         }
         .padding(.horizontal, 12)
@@ -118,7 +109,7 @@ struct ChatComposer: View {
             .textFieldStyle(.plain)
             .lineLimit(1 ... 6)
             .padding(.vertical, 7)
-            .sendsOnReturn(isActive: isFocused.wrappedValue, canSend: canSend && !isBusy, action: onSend)
+            .sendsOnReturn(isActive: isFocused.wrappedValue, canSend: canSend, action: onSend)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
                 if !isExpanded, w > 0 { compactTextWidth = w }
             }
