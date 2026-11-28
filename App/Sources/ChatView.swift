@@ -100,10 +100,16 @@ struct ChatView: View {
                     scrollToEnd(animation: .default)
                 }
             }
-            // A step of the reply being streamed makes its line taller. The lazy stack can stop drawing its rows
-            // when a line grows under a scroll to the end, leaving the viewport blank: the scroll is asked again,
-            // which also keeps the newest step in view while the reader follows the end.
+            // A step or delta of the reply being streamed makes its line taller. The lazy stack can stop drawing
+            // its rows when a line grows under a scroll to the end, leaving the viewport blank: the scroll is
+            // asked again, which also keeps the newest step or delta in view while the reader follows the end.
             .onChange(of: transcript.lines.last?.steps.count) { _, _ in
+                if transcript.isSending, isAtBottom || endRetries > 0 {
+                    endRetries = max(endRetries, 1)
+                    scrollToEnd(animation: nil)
+                }
+            }
+            .onChange(of: transcript.lines.last?.text) { _, _ in
                 if transcript.isSending, isAtBottom || endRetries > 0 {
                     endRetries = max(endRetries, 1)
                     scrollToEnd(animation: nil)
@@ -268,9 +274,22 @@ private extension ChatView {
         position.scrollTo(id: lastID, anchor: .bottom)
     }
 
-    /// Loading and failure state, above the transcript.
+    /// Loading, streaming and failure state, above the transcript.
     @ViewBuilder
     var statusView: some View {
+        if transcript.isSending {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Streaming reply…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .transition(.opacity)
+        }
+
         switch transcript.state {
         case .idle, .loaded:
             EmptyView()

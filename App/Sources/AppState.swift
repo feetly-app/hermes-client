@@ -55,7 +55,8 @@ final class AppState {
                 source: client, storedImages: sidecar.map { Self.storedImages($0) }, sidecar: sidecar
             ),
             projects: sidecar.map { ProjectList(store: $0) },
-            model: settings.modelChoice
+            model: settings.modelChoice,
+            sidecar: sidecar
         )
     }
 

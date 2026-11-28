@@ -324,4 +324,27 @@ struct ConversationBrowserSidecarTests {
         transcript.stop()
         await waitUntilAttachEnds(transcript)
     }
+
+    @Test("isStreaming reports active remote turns from the sidecar and live replies")
+    func isStreamingReportsActiveStreams() async throws {
+        let sidecar = FakeTurnStreamer(
+            status: .success(SidecarStreamStatus(isActive: true)), attachEvents: [.delta("Half")], attachStaysOpen: true
+        )
+        let browser = ConversationBrowser(
+            remoteSessions: RemoteSessionList(source: RunningTurnSource(), sidecar: sidecar),
+            model: ModelChoice(model: "m"),
+            sidecar: sidecar
+        )
+        await browser.reloadSessions()
+        #expect(browser.isStreaming("s1"))
+        #expect(!browser.isStreaming("nonexistent"))
+
+        browser.selectSession("s1")
+        let transcript = try #require(browser.openedRemote)
+        #expect(browser.isStreaming("s1"))
+
+        transcript.stop()
+        await waitUntilAttachEnds(transcript)
+        #expect(!transcript.isSending)
+    }
 }

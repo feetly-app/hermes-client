@@ -201,7 +201,13 @@ struct ConversationListView: View {
     private func row(_ session: RemoteSession) -> some View {
         NavigationLink(value: SidebarItem.session(session.id)) {
             Label {
-                Text(session.displayTitle)
+                HStack {
+                    Text(session.displayTitle)
+                    if browser.isStreaming(session.id) {
+                        Spacer()
+                        StreamingPulseIndicator()
+                    }
+                }
             } icon: {
                 Image(systemName: Self.icon(for: session.kind))
                     .foregroundStyle(.primary)
