@@ -49,8 +49,11 @@ public final class ConversationBrowser {
 
     /// The model new sessions are locked on.
     private let model: ModelChoice
+    private let sidecar: (any TurnStreaming)?
     /// Sessions created here in which no message was sent yet.
     private var unsentSessionIDs: Set<String> = []
+    /// Sessions currently streaming a turn on the remote sidecar.
+    public private(set) var streamingSessionIDs: Set<String> = []
     /// Sessions left while a reply was streaming. Without a sidecar the reply exists only in the transcript
     /// that sent the message: the instance offers no way to attach to a turn already running, so opening the
     /// session again shows that transcript instead of a page read from the instance. With a sidecar a new
@@ -59,10 +62,16 @@ public final class ConversationBrowser {
 
     /// `model` is the model new conversations run on, from the connection settings. `projects` is `nil`
     /// without a sidecar.
-    public init(remoteSessions: RemoteSessionList, projects: ProjectList? = nil, model: ModelChoice = .instanceDefault) {
+    public init(
+        remoteSessions: RemoteSessionList,
+        projects: ProjectList? = nil,
+        model: ModelChoice = .instanceDefault,
+        sidecar: (any TurnStreaming)? = nil
+    ) {
         self.remoteSessions = remoteSessions
         self.projects = projects
         self.model = model
+        self.sidecar = sidecar
     }
 
     /// The conversations in no project, most recent activity first: the Recents of the sidebar.
@@ -206,13 +215,41 @@ public final class ConversationBrowser {
     }
 
     /// Reloads the session list and the projects, then gives the open conversation its new title, if the
-    /// instance named it. A project that is gone from the sidecar closes.
+    /// instance named it. A project that is gone from the sidecar closes. Checks which sessions have active streams.
     public func reloadSessions() async {
         async let projectsReloaded: Void = reloadProjects()
         await remoteSessions.reload()
         await projectsReloaded
         syncOpenedTitle()
         syncOpenedProject()
+        await checkActiveStreams()
+    }
+
+    /// Whether the conversation is currently streaming a turn (locally or on the remote sidecar).
+    public func isStreaming(_ sessionID: String) -> Bool {
+        if streamingSessionIDs.contains(sessionID) { return true }
+        if let openedRemote,
+           openedRemote.sessionID == sessionID || openedRemote.activeSessionID == sessionID,
+           openedRemote.isSending
+        {
+            return true
+        }
+        return liveTranscripts.contains {
+            ($0.sessionID == sessionID || $0.activeSessionID == sessionID) && $0.isSending
+        }
+    }
+
+    /// Polls the active stream status for visible sessions from the sidecar.
+    public func checkActiveStreams() async {
+        guard let sidecar else { return }
+        let ids = remoteSessions.sessions.map(\.id)
+        for id in ids.prefix(25) {
+            if let status = try? await sidecar.activeStreamStatus(sessionID: id), status.isActive {
+                streamingSessionIDs.insert(id)
+            } else {
+                streamingSessionIDs.remove(id)
+            }
+        }
     }
 
     /// Creates a project on the sidecar and opens it. Throws `ProjectError`, for example `nameTaken` or
@@ -333,7 +370,19 @@ public final class ConversationBrowser {
         transcript.onReplyEnded = { [weak self, weak transcript] in
             guard let self, let transcript else { return }
             unsentSessionIDs.remove(transcript.activeSessionID)
+            streamingSessionIDs.remove(transcript.sessionID)
+            streamingSessionIDs.remove(transcript.activeSessionID)
             Task { await self.reloadSessions() }
+        }
+        transcript.onStreamingChanged = { [weak self, weak transcript] isStreaming in
+            guard let self, let transcript else { return }
+            if isStreaming {
+                streamingSessionIDs.insert(transcript.sessionID)
+                streamingSessionIDs.insert(transcript.activeSessionID)
+            } else {
+                streamingSessionIDs.remove(transcript.sessionID)
+                streamingSessionIDs.remove(transcript.activeSessionID)
+            }
         }
     }
 

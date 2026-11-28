@@ -94,6 +94,8 @@ public final class RemoteTranscript: Identifiable {
     /// Called on the main actor when a reply stops streaming, whatever the outcome. The instance may have
     /// named the session meanwhile.
     var onReplyEnded: (@MainActor () -> Void)?
+    /// Called on the main actor when the streaming state changes.
+    var onStreamingChanged: (@MainActor (Bool) -> Void)?
     public private(set) var lines: [TranscriptLine] = []
     public private(set) var state: State = .idle
     public private(set) var hasMore = false
@@ -333,6 +335,7 @@ public final class RemoteTranscript: Identifiable {
               !isSending, sessionID == activeSessionID
         else { return }
         isSending = true
+        onStreamingChanged?(true)
         sendError = nil
         let replyID = "local-assistant-\(UUID().uuidString)"
         lines.append(TranscriptLine(id: replyID, role: "assistant", text: "", date: nil))
@@ -344,6 +347,7 @@ public final class RemoteTranscript: Identifiable {
             await stream.value
             self.sendTask = nil
             self.isSending = false
+            self.onStreamingChanged?(false)
             self.attachTask = nil
             self.onReplyEnded?()
         }
@@ -394,6 +398,7 @@ public final class RemoteTranscript: Identifiable {
         let images = Array(images.prefix(Self.maxImagesPerMessage))
         guard !message.isEmpty || !images.isEmpty, !isSending else { return }
         isSending = true
+        onStreamingChanged?(true)
         hasSent = true
         sendError = nil
         lines.append(
@@ -410,6 +415,7 @@ public final class RemoteTranscript: Identifiable {
         await task.value
         sendTask = nil
         isSending = false
+        onStreamingChanged?(false)
         onReplyEnded?()
     }
 

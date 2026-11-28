@@ -187,7 +187,13 @@ struct ProjectSidebarView: View {
                 ForEach(sessions) { session in
                     NavigationLink(value: SidebarItem.session(session.id)) {
                         Label {
-                            Text(session.displayTitle)
+                            HStack {
+                                Text(session.displayTitle)
+                                if browser.isStreaming(session.id) {
+                                    Spacer()
+                                    StreamingPulseIndicator()
+                                }
+                            }
                         } icon: {
                             Image(systemName: ConversationListView.icon(for: session.kind))
                         }
