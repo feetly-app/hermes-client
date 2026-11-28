@@ -103,8 +103,6 @@ public final class RemoteTranscript: Identifiable {
     public private(set) var lines: [TranscriptLine] = []
     public private(set) var state: State = .idle
     public private(set) var hasMore = false
-    /// `true` while a reply is streaming.
-    public private(set) var isSending = false
     /// `true` once a message was sent from this transcript.
     public private(set) var hasSent = false
     /// Why the last message got no reply, or `nil`.
@@ -118,23 +116,21 @@ public final class RemoteTranscript: Identifiable {
     private let sidecar: (any TurnStreaming)?
     /// Messages received so far, displayed or not: the offset of the next page.
     private var received = 0
-    private var sendTask: Task<Void, Never>?
+    private var activeStreamCount = 0
+    private var activeTasks: [UUID: Task<Void, Never>] = [:]
     /// The page request in flight, shared by every caller of `load()` and `loadMore()`.
     private var loadTask: Task<Void, Never>?
     /// Follows a turn attached to by `load()`, until its reply ended and was cleaned up.
     private(set) var attachTask: Task<Void, Never>?
 
-    private struct QueuedTurn: Sendable {
-        let lineID: String
-        let message: String
-        let images: [ImageAttachment]
+    /// Whether a message is currently streaming.
+    public var isSending: Bool {
+        activeStreamCount > 0
     }
 
-    private var sendQueue: [QueuedTurn] = []
-
-    /// Whether there are messages waiting in queue to be sent.
+    /// Whether there are messages waiting in queue on the server.
     public var hasQueuedMessages: Bool {
-        !sendQueue.isEmpty
+        lines.contains { $0.isQueued }
     }
 
     /// With a `sidecar`, messages are sent through it, and `load()` attaches to a turn already running.
@@ -352,32 +348,27 @@ public final class RemoteTranscript: Identifiable {
         guard let status = try? await sidecar.activeStreamStatus(sessionID: sessionID), status.isActive,
               !isSending, sessionID == activeSessionID
         else { return }
-        isSending = true
-        onStreamingChanged?(true)
+        activeStreamCount += 1
+        if activeStreamCount == 1 {
+            onStreamingChanged?(true)
+        }
         sendError = nil
         let replyID = "local-assistant-\(UUID().uuidString)"
         lines.append(TranscriptLine(id: replyID, role: "assistant", text: "", date: nil))
+        let taskID = UUID()
         let stream = Task {
             await self.consume(await sidecar.attachStream(sessionID: sessionID), replyID: replyID)
         }
-        sendTask = stream
+        activeTasks[taskID] = stream
         attachTask = Task {
             await stream.value
-            if !self.sendQueue.isEmpty && self.sendError == nil && !Task.isCancelled {
-                let next = self.sendQueue.removeFirst()
-                let task = Task {
-                    await self.processSendQueue(
-                        initialMessage: next.message, initialImages: next.images, initialLineID: next.lineID
-                    )
-                }
-                self.sendTask = task
-                await task.value
+            self.activeTasks.removeValue(forKey: taskID)
+            self.activeStreamCount = max(0, self.activeStreamCount - 1)
+            if self.activeStreamCount == 0 {
+                self.onStreamingChanged?(false)
+                self.onReplyEnded?()
             }
-            self.sendTask = nil
-            self.isSending = false
-            self.onStreamingChanged?(false)
             self.attachTask = nil
-            self.onReplyEnded?()
         }
     }
 
@@ -419,8 +410,8 @@ public final class RemoteTranscript: Identifiable {
     }
 
     /// Sends a message, with its images, to the session and shows the reply as it streams. The user line
-    /// appears at once. If a reply is still streaming, the message is queued and sent as soon as the
-    /// previous turns finish. A message with neither text nor images is ignored. Images past
+    /// appears at once. If a reply is still streaming, the message is sent and marked as queued until
+    /// the instance begins replying. A message with neither text nor images is ignored. Images past
     /// `maxImagesPerMessage` are dropped.
     public func send(_ text: String, images: [ImageAttachment] = []) async {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -428,86 +419,45 @@ public final class RemoteTranscript: Identifiable {
         guard !message.isEmpty || !images.isEmpty else { return }
 
         let userLineID = "local-user-\(UUID().uuidString)"
+        let wasSending = isSending
         let userLine = TranscriptLine(
             id: userLineID, role: "user", text: message, date: Date(),
             images: images.map { .attached($0) },
-            isQueued: isSending
+            isQueued: wasSending
         )
         lines.append(userLine)
 
-        if isSending {
-            sendQueue.append(QueuedTurn(lineID: userLineID, message: message, images: images))
-            return
-        }
+        let replyID = "local-assistant-\(UUID().uuidString)"
+        lines.append(TranscriptLine(id: replyID, role: "assistant", text: "", date: nil))
 
-        isSending = true
-        onStreamingChanged?(true)
+        activeStreamCount += 1
+        if activeStreamCount == 1 {
+            onStreamingChanged?(true)
+        }
         hasSent = true
         sendError = nil
 
+        let taskID = UUID()
         let task = Task {
-            await self.processSendQueue(
-                initialMessage: message, initialImages: images, initialLineID: userLineID
-            )
+            await self.stream(message, images: images, replyID: replyID, userLineID: userLineID)
         }
-        sendTask = task
+        activeTasks[taskID] = task
         await task.value
-        sendTask = nil
-        isSending = false
-        onStreamingChanged?(false)
-        onReplyEnded?()
+        activeTasks.removeValue(forKey: taskID)
+        activeStreamCount = max(0, activeStreamCount - 1)
+        if activeStreamCount == 0 {
+            onStreamingChanged?(false)
+            onReplyEnded?()
+        }
     }
 
-    /// Stops the reply being streamed and clears any queued messages. The text received so far stays
-    /// in the transcript. Through a sidecar the turn goes on there: this only stops following it.
+    /// Stops any replies currently streaming. The text received so far stays in the transcript.
+    /// Through a sidecar the turn goes on there: this only stops following it.
     public func stop() {
-        clearSendQueue()
-        sendTask?.cancel()
-    }
-
-    private func processSendQueue(
-        initialMessage: String, initialImages: [ImageAttachment], initialLineID: String
-    ) async {
-        var current: (message: String, images: [ImageAttachment], lineID: String)? = (
-            initialMessage, initialImages, initialLineID
-        )
-
-        while let active = current {
-            if let index = lines.firstIndex(where: { $0.id == active.lineID }) {
-                lines[index].isQueued = false
-            }
-
-            let replyID = "local-assistant-\(UUID().uuidString)"
-            let replyLine = TranscriptLine(id: replyID, role: "assistant", text: "", date: nil)
-            if let userIndex = lines.firstIndex(where: { $0.id == active.lineID }) {
-                lines.insert(replyLine, at: userIndex + 1)
-            } else {
-                lines.append(replyLine)
-            }
-
-            await stream(active.message, images: active.images, replyID: replyID)
-
-            if Task.isCancelled || sendError != nil {
-                clearSendQueue()
-                break
-            }
-
-            if !sendQueue.isEmpty {
-                let next = sendQueue.removeFirst()
-                current = (next.message, next.images, next.lineID)
-            } else {
-                current = nil
-            }
+        for task in activeTasks.values {
+            task.cancel()
         }
-    }
-
-    private func clearSendQueue() {
-        for queued in sendQueue {
-            if let index = lines.firstIndex(where: { $0.id == queued.lineID }) {
-                lines[index].isQueued = false
-            }
-        }
-        sendQueue.removeAll()
+        activeTasks.removeAll()
     }
 
     /// Forks the active session so that it accepts API messages. Returns `false`, with `sendError` set,
@@ -529,7 +479,9 @@ public final class RemoteTranscript: Identifiable {
         }
     }
 
-    private func stream(_ message: String, images: [ImageAttachment], replyID: String) async {
+    private func stream(
+        _ message: String, images: [ImageAttachment], replyID: String, userLineID: String
+    ) async {
         guard await forkIfNeeded() else {
             lines.removeAll { $0.id == replyID }
             return
@@ -541,23 +493,40 @@ public final class RemoteTranscript: Identifiable {
         } else {
             events = await source.streamSessionChat(sessionID: activeSessionID, message: message, images: images)
         }
-        await consume(events, replyID: replyID)
+        await consume(events, replyID: replyID, userLineID: userLineID)
     }
 
     /// Shows the events of a reply on its line as they arrive, then tidies the line once the stream ends.
-    private func consume(_ events: AsyncThrowingStream<SessionChatEvent, any Error>, replyID: String) async {
+    private func consume(
+        _ events: AsyncThrowingStream<SessionChatEvent, any Error>,
+        replyID: String,
+        userLineID: String? = nil
+    ) async {
         do {
             for try await event in events {
                 switch event {
+                case .queued:
+                    if let userLineID, let index = lines.firstIndex(where: { $0.id == userLineID }) {
+                        lines[index].isQueued = true
+                    }
                 case .delta(let delta):
+                    if let userLineID, let index = lines.firstIndex(where: { $0.id == userLineID }) {
+                        lines[index].isQueued = false
+                    }
                     setReply(id: replyID) { $0 + delta }
                 case .completed(let content):
+                    if let userLineID, let index = lines.firstIndex(where: { $0.id == userLineID }) {
+                        lines[index].isQueued = false
+                    }
                     if !content.isEmpty {
                         setReply(id: replyID) { _ in content }
                     }
                 case .failed(let reason):
                     sendError = reason
                 case .toolStarted(let name, let preview, let arguments):
+                    if let userLineID, let index = lines.firstIndex(where: { $0.id == userLineID }) {
+                        lines[index].isQueued = false
+                    }
                     addStep(
                         ActivityStep(
                             id: "local-step-\(UUID().uuidString)", name: name, arguments: arguments ?? "",
@@ -568,6 +537,9 @@ public final class RemoteTranscript: Identifiable {
                 case .toolFinished(let name, let preview, let failed):
                     finishStep(named: name, result: preview, failed: failed, in: replyID)
                 case .thinking(let text):
+                    if let userLineID, let index = lines.firstIndex(where: { $0.id == userLineID }) {
+                        lines[index].isQueued = false
+                    }
                     addThinking(text, to: replyID)
                 case .finished:
                     break

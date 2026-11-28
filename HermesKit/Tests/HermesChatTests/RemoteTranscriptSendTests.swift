@@ -212,8 +212,8 @@ struct RemoteTranscriptSendTests {
         #expect(transcript.sendError != nil)
     }
 
-    @Test("sending while a turn streams queues the message with isQueued true, then drains when it finishes")
-    func queuesMessageWhileStreamingAndDrains() async {
+    @Test("sending while a turn streams sends the request immediately to the server and marks user line queued")
+    func sendsWhileStreamingAndServerQueues() async {
         let gate1 = Gate()
         let gate2 = Gate()
         let source = ControllableChatStreamSource(gates: [gate1, gate2])
@@ -222,69 +222,53 @@ struct RemoteTranscriptSendTests {
         let send1 = Task { await transcript.send("First") }
         await waitUntil { transcript.isSending }
 
-        await transcript.send("Second")
-
-        #expect(transcript.lines.count == 3)
-        #expect(transcript.lines.map(\.role) == ["user", "assistant", "user"])
-        #expect(transcript.lines.map(\.text) == ["First", "Reply to First", "Second"])
-        #expect(transcript.lines[0].isQueued == false)
-        #expect(transcript.lines[2].isQueued == true)
-        #expect(transcript.hasQueuedMessages)
-        #expect(await source.sent == ["First"])
-
-        await gate1.open()
+        let send2 = Task { await transcript.send("Second") }
         await waitUntil { await source.sent.count == 2 }
 
-        #expect(transcript.lines[2].isQueued == false)
-        #expect(!transcript.hasQueuedMessages)
-        #expect(transcript.lines.map(\.role) == ["user", "assistant", "user", "assistant"])
+        // Both requests were dispatched to the server immediately (no local queue buffer)
+        #expect(await source.sent == ["First", "Second"])
+        #expect(transcript.lines.contains { $0.text == "Second" && $0.isQueued })
 
-        await gate2.open()
+        await gate1.open()
         await send1.value
 
-        #expect(transcript.lines.map(\.text) == ["First", "Reply to First", "Second", "Reply to Second"])
+        await gate2.open()
+        await send2.value
+
+        #expect(!transcript.hasQueuedMessages)
         #expect(!transcript.isSending)
     }
 
-    @Test("multiple queued messages are executed in FIFO order")
-    func multipleQueuedMessagesFIFO() async {
-        let gate1 = Gate()
-        let gate2 = Gate()
-        let gate3 = Gate()
-        let source = ControllableChatStreamSource(gates: [gate1, gate2, gate3])
+    @Test("receiving a run.queued event marks the message as queued and removes empty assistant placeholder on done")
+    func handlesRunQueuedEvent() async {
+        let source = FakeChatStreamSource(events: [.queued, .finished])
         let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source)
 
-        let send1 = Task { await transcript.send("First") }
-        await waitUntil { transcript.isSending }
+        await transcript.send("Queued prompt")
 
-        await transcript.send("Second")
-        await transcript.send("Third")
-
-        #expect(transcript.lines.count == 4)
-        #expect(transcript.lines[2].text == "Second" && transcript.lines[2].isQueued)
-        #expect(transcript.lines[3].text == "Third" && transcript.lines[3].isQueued)
+        // User message is marked isQueued, and empty assistant line was removed
+        #expect(transcript.lines.count == 1)
+        #expect(transcript.lines.first?.text == "Queued prompt")
+        #expect(transcript.lines.first?.isQueued == true)
         #expect(transcript.hasQueuedMessages)
-
-        await gate1.open()
-        await waitUntil { await source.sent.count == 2 }
-
-        #expect(transcript.lines[2].isQueued == false)
-        #expect(transcript.lines[4].text == "Third" && transcript.lines[4].isQueued)
-
-        await gate2.open()
-        await waitUntil { await source.sent.count == 3 }
-
-        #expect(transcript.lines[4].isQueued == false)
-
-        await gate3.open()
-        await send1.value
-
-        #expect(await source.sent == ["First", "Second", "Third"])
         #expect(!transcript.isSending)
     }
 
-    @Test("calling stop cancels stream and clears queued messages")
-    func stopClearsQueuedMessages() async {
+    @Test("deltas following a queued message unmark isQueued")
+    func deltasUnmarkQueued() async {
+        let source = FakeChatStreamSource(events: [.queued, .delta("Here is "), .completed("Here is the answer"), .finished])
+        let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source)
+
+        await transcript.send("Prompt")
+
+        #expect(transcript.lines.count == 2)
+        #expect(transcript.lines[0].text == "Prompt" && !transcript.lines[0].isQueued)
+        #expect(transcript.lines[1].text == "Here is the answer")
+        #expect(!transcript.hasQueuedMessages)
+    }
+
+    @Test("calling stop cancels stream")
+    func stopCancelsActiveStreams() async {
         let gate = Gate()
         let source = ControllableChatStreamSource(gates: [gate])
         let transcript = RemoteTranscript(sessionID: "s1", title: nil, source: source)
@@ -292,15 +276,10 @@ struct RemoteTranscriptSendTests {
         let send1 = Task { await transcript.send("First") }
         await waitUntil { transcript.isSending }
 
-        await transcript.send("Second")
-        #expect(transcript.hasQueuedMessages)
-        #expect(transcript.lines.last?.isQueued == true)
-
         transcript.stop()
         await send1.value
 
-        #expect(!transcript.hasQueuedMessages)
-        #expect(transcript.lines.last?.isQueued == false)
+        #expect(!transcript.isSending)
         #expect(await source.sent == ["First"])
     }
 
@@ -365,10 +344,10 @@ actor ControllableChatStreamSource: SessionListing {
         let gate = index < gates.count ? gates[index] : nil
         return AsyncThrowingStream { continuation in
             let task = Task {
-                continuation.yield(.delta("Reply to \(message)"))
                 if let gate {
                     await gate.wait()
                 }
+                continuation.yield(.delta("Reply to \(message)"))
                 continuation.yield(.completed("Reply to \(message)"))
                 continuation.yield(.finished)
                 continuation.finish()

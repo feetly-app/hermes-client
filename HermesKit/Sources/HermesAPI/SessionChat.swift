@@ -2,6 +2,8 @@ import Foundation
 
 /// An event of `POST /api/sessions/{id}/chat/stream`, reduced to what a transcript needs.
 public enum SessionChatEvent: Sendable, Equatable {
+    /// The message was queued on the server (`run.queued`).
+    case queued
     /// A piece of the assistant reply (`assistant.delta`).
     case delta(String)
     /// The full assistant reply, sent once the turn is complete (`assistant.completed`).
@@ -107,6 +109,8 @@ extension SessionChatEvent {
         switch frame.name {
         case "done":
             self = .finished
+        case "run.queued":
+            self = .queued
         case "assistant.delta":
             guard let delta = Self.field("delta", in: frame.data), !delta.isEmpty else { return nil }
             self = .delta(delta)
