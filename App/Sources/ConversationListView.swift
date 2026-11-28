@@ -12,6 +12,10 @@ struct ConversationListView: View {
     let browser: ConversationBrowser
     /// Set to the reason when a rename or a delete fails.
     @Binding var failure: String?
+    /// When provided (Mac / iPad split view), tapping a conversation selects it instead of pushing.
+    var onSelectSession: ((RemoteSession) -> Void)? = nil
+    /// When provided (Mac sidebar), tapping a project calls it instead of pushing a navigation link.
+    var onOpenProject: ((String) -> Void)? = nil
 
     /// The id of the session being renamed, and the title being typed.
     @State private var renaming: String?
@@ -64,10 +68,6 @@ struct ConversationListView: View {
             if sessions.isEmpty, matchingProjects.isEmpty, isSearching {
                 ContentUnavailableView.search(text: query)
             }
-        }
-        // Again for a new browser, after the connection settings changed: projects and sessions come from it.
-        .task(id: ObjectIdentifier(browser)) {
-            await browser.reloadSessions()
         }
         .refreshable {
             await browser.reloadSessions()
@@ -173,17 +173,33 @@ struct ConversationListView: View {
         }
     }
 
+    private func projectLabel(_ project: Project) -> some View {
+        Label {
+            Text(project.name)
+        } icon: {
+            Image(systemName: "folder")
+                .foregroundStyle(.primary)
+        }
+        .lineLimit(1)
+        .listItemTint(.monochrome)
+    }
+
     /// One line: a folder and the project name.
     private func projectRow(_ project: Project) -> some View {
-        NavigationLink(value: project.id) {
-            Label {
-                Text(project.name)
-            } icon: {
-                Image(systemName: "folder")
-                    .foregroundStyle(.primary)
+        Group {
+            if let onOpenProject {
+                Button {
+                    onOpenProject(project.id)
+                } label: {
+                    projectLabel(project)
+                        .modifier(SelectableRow(isSelectable: true, isSelected: false))
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: SidebarItem.project(project.id)) {
+                    projectLabel(project)
+                }
             }
-            .lineLimit(1)
-            .listItemTint(.monochrome)
         }
         .listRowSeparator(.hidden)
         .modifier(RowActions(
@@ -199,21 +215,37 @@ struct ConversationListView: View {
     /// of the text, not the accent color: `listItemTint(.monochrome)` is what a macOS sidebar honours, the
     /// foreground style is what an iOS list does.
     private func row(_ session: RemoteSession) -> some View {
-        NavigationLink(value: SidebarItem.session(session.id)) {
-            Label {
-                Text(session.displayTitle)
-            } icon: {
-                Image(systemName: Self.icon(for: session.kind))
-                    .foregroundStyle(.primary)
+        Group {
+            if let onSelectSession {
+                Button {
+                    onSelectSession(session)
+                } label: {
+                    rowContent(session)
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: SidebarItem.session(session.id)) {
+                    rowContent(session)
+                }
             }
-            .lineLimit(1)
-            .listItemTint(.monochrome)
         }
         .listRowSeparator(.hidden)
         .modifier(RowActions(
             onRename: { startRenaming(session.id, title: session.title ?? "") },
             onDelete: { deleting = session.id }
         ))
+    }
+
+    private func rowContent(_ session: RemoteSession) -> some View {
+        Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: Self.icon(for: session.kind))
+                .foregroundStyle(.primary)
+        }
+        .lineLimit(1)
+        .listItemTint(.monochrome)
+        .modifier(SelectableRow(isSelectable: onSelectSession != nil, isSelected: browser.selectedSessionID == session.id))
     }
 
     private static var searchPlacement: SearchFieldPlacement {
@@ -353,12 +385,36 @@ extension View {
     /// A plain list on iOS, as in the Claude app: rows straight on the screen background, without the grouped
     /// cards. macOS keeps its native sidebar.
     @ViewBuilder
-    fileprivate func sobreListStyle() -> some View {
+    func sobreListStyle() -> some View {
         #if os(iOS)
             listStyle(.plain)
         #else
             self
         #endif
+    }
+}
+
+/// A conversation row of the split view sidebar, where a tap opens the conversation in the detail column
+/// instead of pushing it: the whole row width takes the tap, and the open conversation is highlighted.
+struct SelectableRow: ViewModifier {
+    let isSelectable: Bool
+    let isSelected: Bool
+
+    func body(content: Content) -> some View {
+        if isSelectable {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                // Wider than the row content, so the icons stay aligned with the project rows.
+                .background {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                        .padding(.horizontal, -8)
+                }
+        } else {
+            content
+        }
     }
 }
 

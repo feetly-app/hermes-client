@@ -64,6 +64,45 @@ struct ProjectScreenTests {
         #expect(browser.selection == .project("p1"))
     }
 
+    @Test("back from a project screen closes the project and keeps the open conversation")
+    func closeProject() async throws {
+        let instance = FakeInstance(sessions: Self.listed)
+        let store = FakeProjectStore(projects: [Project(id: "p1", name: "Hermes", conversationIDs: ["a"])])
+        let browser = makeBrowser(instance: instance, store: store)
+        await browser.reloadSessions()
+        browser.openRemote(Self.listed[0], inProject: "p1")
+
+        browser.closeProject()
+
+        #expect(browser.openedProjectID == nil)
+        #expect(browser.openedRemote?.sessionID == "a")
+        #expect(browser.selection == .session("a"))
+    }
+
+    @Test("a session opens by id, over a project; the same id again keeps its transcript; an unknown id is ignored")
+    func openSessionByID() async throws {
+        let instance = FakeInstance(sessions: Self.listed, unlisted: [Self.older])
+        let store = FakeProjectStore(projects: [Project(id: "p1", name: "Hermes", conversationIDs: ["old"])])
+        let browser = makeBrowser(instance: instance, store: store)
+        await browser.reloadSessions()
+
+        #expect(!browser.openSession("old", inProject: "p1"))
+        #expect(browser.openedRemote == nil)
+
+        let project = try #require(browser.projects?.project(id: "p1"))
+        await browser.loadConversations(in: project)
+        #expect(browser.openSession("old", inProject: "p1"))
+        let transcript = try #require(browser.openedRemote)
+        #expect(transcript.sessionID == "old")
+        #expect(browser.openedProjectID == "p1")
+        #expect(browser.isOpen("old"))
+        #expect(!browser.isOpen("a"))
+
+        #expect(browser.openSession("old"))
+        #expect(browser.openedRemote === transcript)
+        #expect(browser.openedProjectID == nil)
+    }
+
     @Test("a conversation created in a project is attached before it opens, over the project")
     func createInProject() async throws {
         let instance = FakeInstance()

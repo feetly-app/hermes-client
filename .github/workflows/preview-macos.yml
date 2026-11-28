@@ -25,9 +25,10 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 45
     env:
-      BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
-      # Tuist keys uploads on (binary ID, version). The binary ID must change per run as well.
-      MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}
+      BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}.${{ github.run_id }}
+      # Tuist keys uploads on (binary ID, version). The simulator binary is a stub with a stable ID,
+      # so the marketing version must change per run as well, or the upload is rejected as a duplicate.
+      MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}.${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5

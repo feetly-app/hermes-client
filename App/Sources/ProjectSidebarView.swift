@@ -13,6 +13,8 @@ struct ProjectSidebarView: View {
     let startConversation: () -> Void
     /// Set to the reason when an action fails.
     @Binding var failure: String?
+    /// When provided (Mac / iPad split view), tapping a conversation selects it instead of pushing.
+    var onSelectSession: ((RemoteSession) -> Void)? = nil
 
     /// The id of the session being renamed, and the title being typed.
     @State private var renaming: String?
@@ -37,7 +39,9 @@ struct ProjectSidebarView: View {
                     repositoriesSection(project)
                     conversationsSection(project)
                 }
+                .sobreListStyle()
                 .navigationTitle(project.name)
+                .largeNavigationTitle()
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button("New conversation", systemImage: "square.and.pencil", action: startConversation)
@@ -75,20 +79,6 @@ struct ProjectSidebarView: View {
                 ContentUnavailableView("Project not found", systemImage: "folder.badge.questionmark")
             }
         }
-        .onAppear {
-            browser.openProject(projectID)
-        }
-        .onDisappear {
-            if browser.openedProjectID == projectID {
-                browser.openProject("") // clears openedProjectID, closing the project
-            }
-        }
-        // Sync project state
-        .onChange(of: project) { _, newValue in
-            if newValue == nil {
-                browser.select(nil)
-            }
-        }
         .task(id: project?.conversationIDs) {
             if let project {
                 await browser.loadConversations(in: project)
@@ -111,6 +101,7 @@ struct ProjectSidebarView: View {
                             .textSelection(.enabled)
                     }
                     .lineLimit(1)
+                    .listRowSeparator(.hidden)
                     .contextMenu {
                         Button("Detach", systemImage: "trash", role: .destructive) {
                             deletingRepository = repository.id
@@ -185,14 +176,22 @@ struct ProjectSidebarView: View {
                 }
             } else {
                 ForEach(sessions) { session in
-                    NavigationLink(value: SidebarItem.session(session.id)) {
-                        Label {
-                            Text(session.displayTitle)
-                        } icon: {
-                            Image(systemName: ConversationListView.icon(for: session.kind))
+                    Group {
+                        if let onSelectSession {
+                            Button {
+                                onSelectSession(session)
+                            } label: {
+                                projectRowContent(session)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            NavigationLink(value: SidebarItem.session(session.id)) {
+                                projectRowContent(session)
+                            }
                         }
                     }
                     .lineLimit(1)
+                    .listRowSeparator(.hidden)
                     .modifier(RowActions(
                         onRename: {
                             draftTitle = session.title ?? ""
@@ -227,6 +226,16 @@ struct ProjectSidebarView: View {
         } message: { _ in
             Text("It is deleted from your Hermes instance, with all its messages.")
         }
+    }
+
+    private func projectRowContent(_ session: RemoteSession) -> some View {
+        Label {
+            Text(session.displayTitle)
+        } icon: {
+            Image(systemName: ConversationListView.icon(for: session.kind))
+        }
+        .lineLimit(1)
+        .modifier(SelectableRow(isSelectable: onSelectSession != nil, isSelected: browser.selectedSessionID == session.id))
     }
 
     // MARK: Actions
