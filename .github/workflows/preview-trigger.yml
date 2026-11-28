@@ -1,0 +1,52 @@
+name: Preview Trigger
+
+# Trigger workflow listening to pull request label events.
+# When a preview label (preview-simu, preview-ios, or preview-macos) is added to an open PR,
+# it immediately removes the label and dispatches the corresponding preview workflow.
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: preview-trigger-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  remove-label:
+    name: Remove preview label
+    if: github.event.pull_request.state == 'open' && contains(fromJSON('["preview-simu", "preview-ios", "preview-macos"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove preview label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --remove-label "${{ github.event.label.name }}"
+
+  preview-simu:
+    name: iOS Simulator
+    needs: remove-label
+    if: github.event.label.name == 'preview-simu'
+    uses: ./.github/workflows/preview-simu.yml
+    secrets: inherit
+
+  preview-ios:
+    name: iOS Device
+    needs: remove-label
+    if: github.event.label.name == 'preview-ios'
+    uses: ./.github/workflows/preview-ios.yml
+    secrets: inherit
+
+  preview-macos:
+    name: macOS
+    needs: remove-label
+    if: github.event.label.name == 'preview-macos'
+    uses: ./.github/workflows/preview-macos.yml
+    secrets: inherit

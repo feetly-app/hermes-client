@@ -60,7 +60,7 @@ mise run test-app
 
 CI: `.github/workflows/ci.yml` runs the HermesKit tests and builds the app for iOS and macOS on every PR and on `main`, on the `xcode-27` runner (macOS 27 + Xcode 27 preview image). App tests are slow and add little since the business logic lives in HermesKit, so they only run locally via `mise run test-app`.
 
-Previews: adding the `preview-ios` or `preview-macos` label to an open PR runs `.github/workflows/preview-ios.yml` (ad hoc signed IPA + iOS Simulator build) or `preview-macos.yml` (ad hoc signed Mac app) and shares the builds as Tuist Previews. The label is removed when the run starts: add it again to rebuild.
+Previews: adding `preview-simu`, `preview-ios`, or `preview-macos` to an open PR triggers `.github/workflows/preview-trigger.yml`, which removes the label and dispatches the corresponding preview workflow (`preview-simu.yml` for iOS Simulator, `preview-ios.yml` for ad hoc signed iOS device IPA, or `preview-macos.yml` for ad hoc signed Mac app) to share builds as Tuist Previews. Each preview workflow can also be triggered manually (`workflow_dispatch`).
 
 ## Git
 

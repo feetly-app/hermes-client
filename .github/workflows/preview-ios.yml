@@ -1,20 +1,19 @@
-name: Preview iOS
+name: Preview iOS Device
 
-# Builds an ad hoc signed IPA and the iOS Simulator, in parallel jobs, and shares both as Tuist Previews when
-# the `preview-ios` label is added to an open pull request. The IPA installs on the devices registered in the Apple Developer account. It needs the
-# App Store Connect API key secrets. The label is removed as soon as the run starts: add it again to rebuild.
+# Builds an ad hoc signed IPA for registered devices and shares it as a Tuist Preview.
+# It needs the App Store Connect API key and Apple certificates secrets.
+# Can be run manually (workflow_dispatch) or triggered by the preview trigger workflow (workflow_call).
 on:
-  pull_request:
-    types: [labeled]
+  workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: preview-ios-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  group: preview-ios-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   id-token: write # Tuist OIDC authentication
-  pull-requests: write # Remove the preview label
 
 env:
   # Tuist server project, read by Tuist.swift. Update if the Tuist project uses a different handle.
@@ -23,7 +22,6 @@ env:
 jobs:
   preview:
     name: Device preview
-    if: github.event.label.name == 'preview-ios' && github.event.pull_request.state == 'open'
     runs-on: xcode-27
     timeout-minutes: 60
     env:
@@ -42,13 +40,6 @@ jobs:
       # Tuist keys uploads on (binary ID, version): the marketing version must change per run as well.
       MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}
     steps:
-      - name: Remove the preview-ios label
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --remove-label preview-ios
       - name: Check the App Store Connect secrets
         run: |
           if [ -z "$APP_STORE_CONNECT_API_KEY_BASE64" ]; then
@@ -153,45 +144,3 @@ jobs:
       - name: Remove the signing keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-
-  simulator:
-    name: iOS Simulator preview
-    if: github.event.label.name == 'preview-ios' && github.event.pull_request.state == 'open'
-    runs-on: xcode-27
-    timeout-minutes: 45
-    env:
-      BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
-      # Tuist keys uploads on (binary ID, version): the marketing version must change per run as well.
-      MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v5
-        with:
-          install: true
-          cache: true
-      - name: Authenticate with Tuist
-        run: tuist auth login
-      - name: Generate Tuist project
-        run: |
-          tuist install
-          tuist generate --no-open
-      - name: Build for the iOS Simulator
-        run: |
-          tuist xcodebuild build \
-            -workspace Hermes.xcworkspace \
-            -scheme Hermes \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            MARKETING_VERSION="$MARKETING_VERSION_PREVIEW"
-      - name: Share simulator preview
-        run: tuist share Hermes --configuration Debug --platforms ios
-      - name: Dump Tuist session logs
-        if: always()
-        run: |
-          # Temporary debug step: Tuist keeps the upload error only in its session logs.
-          find "$HOME/.local/state/tuist/sessions" -name logs.txt 2>/dev/null | while read -r f; do
-            echo "::group::$f"
-            grep -iE "error|fail|upload|reject|duplicate|status|http" "$f" | tail -200 || true
-            echo "::endgroup::"
-          done

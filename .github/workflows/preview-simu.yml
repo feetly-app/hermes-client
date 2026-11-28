@@ -1,0 +1,61 @@
+name: Preview iOS Simulator
+
+# Builds the app for the iOS Simulator and shares it as a Tuist Preview.
+# Can be run manually (workflow_dispatch) or triggered by the preview trigger workflow (workflow_call).
+on:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: preview-simu-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write # Tuist OIDC authentication
+
+env:
+  # Tuist server project, read by Tuist.swift. Update if the Tuist project uses a different handle.
+  TUIST_SERVER_FULL_HANDLE: mtm-capital/hermes-client
+
+jobs:
+  preview:
+    name: iOS Simulator preview
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+      # Tuist keys uploads on (binary ID, version): the marketing version must change per run as well.
+      MARKETING_VERSION_PREVIEW: 5.1.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install: true
+          cache: true
+      - name: Authenticate with Tuist
+        run: tuist auth login
+      - name: Generate Tuist project
+        run: |
+          tuist install
+          tuist generate --no-open
+      - name: Build for the iOS Simulator
+        run: |
+          tuist xcodebuild build \
+            -workspace Hermes.xcworkspace \
+            -scheme Hermes \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            MARKETING_VERSION="$MARKETING_VERSION_PREVIEW"
+      - name: Share simulator preview
+        run: tuist share Hermes --configuration Debug --platforms ios
+      - name: Dump Tuist session logs
+        if: always()
+        run: |
+          # Temporary debug step: Tuist keeps the upload error only in its session logs.
+          find "$HOME/.local/state/tuist/sessions" -name logs.txt 2>/dev/null | while read -r f; do
+            echo "::group::$f"
+            grep -iE "error|fail|upload|reject|duplicate|status|http" "$f" | tail -200 || true
+            echo "::endgroup::"
+          done
